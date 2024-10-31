@@ -21,105 +21,10 @@
             width: 100%;
             background: #f8f8f8;
         }
-
-        #status-panel {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 16px;
-            border-radius: 12px;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
-            max-width: 300px;
-            font-size: 13px;
-            transition: all 0.3s ease;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            margin-top: 10px; /* Space below default controls */
-        }
-
-        #status-panel:hover {
-            box-shadow: 0 6px 32px rgba(0, 0, 0, 0.15);
-        }
-
-        .status-item {
-            padding: 8px 12px;
-            border-radius: 8px;
-            transition: all 0.2s ease;
-            line-height: 1.4;
-        }
-
-        .status-info {
-            background: rgba(33, 150, 243, 0.1);
-            color: #1565c0;
-        }
-
-        .status-success {
-            background: rgba(76, 175, 80, 0.1);
-            color: #2e7d32;
-        }
-
-        .status-warning {
-            background: rgba(255, 152, 0, 0.1);
-            color: #ef6c00;
-        }
-
-        .status-error {
-            background: rgba(244, 67, 54, 0.1);
-            color: #c62828;
-        }
-
-        #loading-progress {
-            width: 100%;
-            height: 3px;
-            background: rgba(0, 0, 0, 0.05);
-            border-radius: 1.5px;
-            overflow: hidden;
-            display: none;
-        }
-
-        #progress-bar {
-            width: 0%;
-            height: 100%;
-            background: linear-gradient(90deg, #4caf50, #45a049);
-            border-radius: 1.5px;
-            transition: width 0.3s ease-in-out;
-        }
-
-        @keyframes shimmer {
-            0% {
-                opacity: 0.5;
-            }
-            50% {
-                opacity: 1;
-            }
-            100% {
-                opacity: 0.5;
-            }
-        }
-
-        .updating {
-            animation: shimmer 1.5s infinite;
-        }
-
-        /* Responsive adjustments */
-        @media (max-width: 600px) {
-            #status-panel {
-                max-width: 90%;
-                margin-left: 5%;
-                margin-right: 5%;
-            }
-        }
     </style>
 </head>
 <body>
-    <div id="map">
-        <div id="status-panel">
-            <div id="data-status" class="status-item status-info"></div>
-            <div id="loading-progress">
-                <div id="progress-bar"></div>
-            </div>
-        </div>
-    </div>
+    <div id="map"></div>
 
     <!-- Initial configuration -->
     <script>
@@ -193,43 +98,11 @@
 
             let map, heatmap;
             let currentRadius = window.mapConfig.heatmap.initialRadius;
-            let isInitialLoad = true;
             let retryTimeout = null;
-            let isUpdating = false;
             let updateInterval = null;
 
             function checkDependencies() {
                 return window.depsLoaded.turf && window.depsLoaded.googleMaps;
-            }
-
-            function updateStatus(elementId, message, type) {
-                const element = document.getElementById(elementId);
-                if (element) {
-                    element.textContent = message;
-                    element.className = `status-item status-${type}`;
-                    if (type === 'info') {
-                        element.classList.add('updating');
-                    } else {
-                        element.classList.remove('updating');
-                    }
-                }
-            }
-
-            function updateProgressBar(visible, progress = 0) {
-                const progressElement = document.getElementById('loading-progress');
-                const progressBar = document.getElementById('progress-bar');
-
-                if (visible) {
-                    progressElement.style.display = 'block';
-                    progressBar.style.width = `${progress}%`;
-                } else {
-                    // Fade out smoothly
-                    progressBar.style.width = '100%';
-                    setTimeout(() => {
-                        progressElement.style.display = 'none';
-                        progressBar.style.width = '0%';
-                    }, 300);
-                }
             }
 
             function loadCachedData() {
@@ -263,15 +136,9 @@
             }
 
             async function fetchData(retryCount = 0) {
-                if (isUpdating || !checkDependencies()) return;
-
-                isUpdating = true;
-                updateProgressBar(true, 0);
+                if (!checkDependencies()) return;
 
                 try {
-                    updateStatus('data-status', 'Updating data...', 'info');
-                    updateProgressBar(true, 30);
-
                     const response = await fetch(`${window.mapConfig.dataSource}?t=${Date.now()}`, {
                         headers: {
                             'Accept-Encoding': 'gzip',
@@ -279,25 +146,14 @@
                         }
                     });
 
-                    updateProgressBar(true, 60);
-
                     if (!response.ok) {
                         throw new Error(`HTTP error! status: ${response.status}`);
                     }
 
                     const geoJsonData = await response.json();
-                    updateProgressBar(true, 90);
 
                     saveToCache(geoJsonData);
                     updateHeatmap(geoJsonData);
-
-                    updateStatus('data-status',
-                        `Last updated: ${new Date().toLocaleTimeString()}`,
-                        'success');
-                    updateProgressBar(false);
-
-                    isInitialLoad = false;
-                    isUpdating = false;
 
                     if (retryTimeout) {
                         clearTimeout(retryTimeout);
@@ -311,19 +167,9 @@
             }
 
             function handleFetchError(error, retryCount) {
-                updateProgressBar(false);
-                isUpdating = false;
-
                 const cachedData = loadCachedData();
                 if (cachedData) {
                     updateHeatmap(cachedData);
-                    updateStatus('data-status',
-                        'Failed to fetch new data, using cached data',
-                        'warning');
-                } else {
-                    updateStatus('data-status',
-                        `Failed to load data. Retrying...`,
-                        'error');
                 }
 
                 const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
@@ -357,10 +203,6 @@
                 };
 
                 map = new google.maps.Map(document.getElementById('map'), mapOptions);
-
-                // Add status panel to the map controls
-                const statusPanel = document.getElementById('status-panel');
-                map.controls[google.maps.ControlPosition.TOP_LEFT].push(statusPanel);
 
                 heatmap = new google.maps.visualization.HeatmapLayer({
                     map,
@@ -441,7 +283,7 @@
                 let lastFetchTime = Date.now();
                 updateInterval = setInterval(() => {
                     const now = Date.now();
-                    if (!isUpdating && (now - lastFetchTime >= window.mapConfig.refreshInterval)) {
+                    if (now - lastFetchTime >= window.mapConfig.refreshInterval) {
                         lastFetchTime = now;
                         fetchData();
                     }
@@ -464,7 +306,6 @@
 
                 } catch (error) {
                     console.error('Initialization error:', error);
-                    updateStatus('data-status', 'Failed to initialize map. Please refresh the page.', 'error');
                 }
             };
         })();
@@ -501,7 +342,7 @@
 
         // Error handler for script loading
         function handleScriptError(scriptName) {
-            updateStatus('data-status', `Failed to load ${scriptName}. Please refresh the page.`, 'error');
+            console.error(`Failed to load ${scriptName}. Please refresh the page.`);
         }
 
         // Start loading dependencies
