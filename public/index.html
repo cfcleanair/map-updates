@@ -28,11 +28,49 @@
             z-index: 1000;
             font-size: 12px;
         }
+
+        #loadingIndicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 2000;
+            display: none;
+            text-align: center;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #ff00001a;
+            color: #d32f2f;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="lastUpdate">Last updated: Never</div>
+    <div id="loadingIndicator">
+        <div class="spinner"></div>
+        <div id="loadingText">Loading data...</div>
+    </div>
 
     <!-- Load environment variables first -->
     <script>
@@ -53,10 +91,11 @@
 
         const Config = {
             dataSource: 'https://web-production-0bd7a.up.railway.app/odor',
-            refreshInterval: 60000, // 1 minute in milliseconds
+            refreshInterval: 60000,
+            retryInterval: 5000, // Retry interval for failed requests
             map: {
-                initialZoom: 8, // Changed from 13 to 8 for wider view
-                defaultCenter: { lat: 31.4117257, lng: 35.0818155 }, // Israel's center coordinates
+                initialZoom: 8,
+                defaultCenter: { lat: 31.4117257, lng: 35.0818155 },
                 defaultStyles: [
                     {
                         featureType: "landscape",
@@ -97,68 +136,102 @@
 
         let map, heatmap;
         let currentRadius = Config.heatmap.initialRadius;
+        let isInitialLoad = true;
+        let retryTimeout = null;
 
-        /**
-         * Fetches GeoJSON data with cache-busting
-         */
-        async function fetchData() {
+        async function fetchData(retryCount = 0) {
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const loadingText = document.getElementById('loadingText');
+            
             try {
-                const timestamp = new Date().getTime();
-                const response = await fetch(`${Config.dataSource}?t=${timestamp}`);
-                if (!response.ok) {
-                    throw new Error('Failed to load GeoJSON data');
+                if (isInitialLoad) {
+                    loadingIndicator.style.display = 'block';
+                    loadingText.textContent = 'Loading initial data...';
                 }
+
+                const response = await fetch(`${Config.dataSource}?t=${Date.now()}`, {
+                    headers: {
+                        'Accept-Encoding': 'gzip',
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
                 const geoJsonData = await response.json();
                 updateHeatmap(geoJsonData);
                 updateLastUpdateTime();
+                
+                loadingIndicator.style.display = 'none';
+                isInitialLoad = false;
+                
+                // Clear any existing retry timeout
+                if (retryTimeout) {
+                    clearTimeout(retryTimeout);
+                    retryTimeout = null;
+                }
+
             } catch (error) {
                 console.error('Data fetch failed:', error);
-                document.getElementById('lastUpdate').textContent = 
-                    `Error: Failed to load data. Retrying...`;
+                
+                if (isInitialLoad) {
+                    loadingText.textContent = `Loading failed. Retrying... (${retryCount + 1})`;
+                }
+
+                const lastUpdate = document.getElementById('lastUpdate');
+                lastUpdate.textContent = `Error: Failed to load data. Retrying...`;
+                lastUpdate.classList.add('error');
+
+                // Retry with exponential backoff
+                const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+                retryTimeout = setTimeout(() => fetchData(retryCount + 1), retryDelay);
             }
         }
 
-        /**
-         * Updates the last update timestamp display
-         */
         function updateLastUpdateTime() {
             const now = new Date();
-            document.getElementById('lastUpdate').textContent = 
-                `Last updated: ${now.toLocaleTimeString()}`;
+            const lastUpdate = document.getElementById('lastUpdate');
+            lastUpdate.textContent = `Last updated: ${now.toLocaleTimeString()}`;
+            lastUpdate.classList.remove('error');
         }
 
-        /**
-         * Updates the heatmap with new data
-         */
         function updateHeatmap(geoJsonData) {
             const heatmapData = convertGeoJsonToHeatmapData(geoJsonData);
             validateHeatmapData(heatmapData);
             
             if (!map) {
-                // First time initialization
-                initializeMap(Config.map.defaultCenter); // Use default center instead of calculating
+                initializeMap(Config.map.defaultCenter);
             }
             
-            // Update existing heatmap data
             heatmap.setData(heatmapData);
         }
 
-        /**
-         * Initializes the map (called only once)
-         */
         function initializeMap(center) {
             map = new google.maps.Map(document.getElementById('map'), {
                 zoom: Config.map.initialZoom,
                 center: center,
                 mapTypeId: 'roadmap',
-                styles: Config.map.defaultStyles
+                styles: Config.map.defaultStyles,
+                minZoom: 6,  // Restrict zoom out
+                maxZoom: 15, // Restrict zoom in
+                restriction: {  // Restrict pan area
+                    latLngBounds: {
+                        north: 33.5,
+                        south: 29.5,
+                        east: 36.0,
+                        west: 34.0
+                    }
+                }
             });
 
             heatmap = new google.maps.visualization.HeatmapLayer({
                 map,
                 radius: currentRadius,
                 opacity: Config.heatmap.opacity,
-                gradient: Config.heatmap.gradient
+                gradient: Config.heatmap.gradient,
+                maxIntensity: 5  // Adjust based on your intensity scale
             });
 
             map.addListener('zoom_changed', updateHeatmapRadius);
@@ -167,20 +240,28 @@
 
         function convertGeoJsonToHeatmapData(geoJson) {
             const heatmapPoints = [];
+            let maxIntensity = 0;
 
             turf.featureEach(geoJson, feature => {
                 if (feature.geometry?.type === "Point") {
                     const [lng, lat] = feature.geometry.coordinates;
                     if (isValidCoordinate(lat, lng)) {
                         const point = new google.maps.LatLng(lat, lng);
-                        const intensity = feature.properties?.intensity;
+                        const intensity = feature.properties?.intensity || 1;
                         
-                        heatmapPoints.push(
-                            intensity ? { location: point, weight: parseFloat(intensity) } : point
-                        );
+                        maxIntensity = Math.max(maxIntensity, intensity);
+                        heatmapPoints.push({
+                            location: point,
+                            weight: parseFloat(intensity)
+                        });
                     }
                 }
             });
+
+            // Adjust heatmap intensity if needed
+            if (heatmap && maxIntensity > 0) {
+                heatmap.set('maxIntensity', maxIntensity);
+            }
 
             return heatmapPoints;
         }
@@ -190,22 +271,6 @@
                    Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
         }
 
-        function calculateDataCenter(points) {
-            const sum = points.reduce((acc, point) => {
-                const location = point.location || point;
-                return {
-                    lat: acc.lat + location.lat(),
-                    lng: acc.lng + location.lng(),
-                    count: acc.count + 1
-                };
-            }, { lat: 0, lng: 0, count: 0 });
-
-            return {
-                lat: sum.lat / sum.count,
-                lng: sum.lng / sum.count
-            };
-        }
-
         function updateHeatmapRadius() {
             const zoom = map.getZoom();
             currentRadius = calculateRadiusForZoom(zoom);
@@ -213,12 +278,13 @@
         }
 
         function calculateRadiusForZoom(zoom) {
-            if (zoom < 9) return 12;
+            if (zoom < 9) return 15;
+            if (zoom < 11) return 12;
             return Math.pow(2, zoom-5);
         }
 
         function validateHeatmapData(data) {
-            if (data.length === 0) {
+            if (!data || data.length === 0) {
                 throw new Error('No valid data points found for visualization');
             }
         }
@@ -226,7 +292,11 @@
         // Initialize and start periodic updates
         window.onload = function() {
             fetchData(); // Initial load
-            setInterval(fetchData, Config.refreshInterval); // Periodic updates
+            setInterval(() => {
+                if (!retryTimeout) { // Only start new fetch if not in retry mode
+                    fetchData();
+                }
+            }, Config.refreshInterval);
         };
     })();
     </script>
