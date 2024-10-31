@@ -20,7 +20,7 @@
         #lastUpdate {
             position: absolute;
             top: 10px;
-            right: 60px; /* Space for the maximize button */
+            right: 60px;
             background: white;
             padding: 8px;
             border-radius: 4px;
@@ -38,16 +38,11 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
     
     <script>
-    /**
-     * Odor Nuisance Heatmap Visualization
-     * This module creates a dynamic heatmap visualization for odor nuisance data
-     * using Google Maps API and Turf.js for geospatial operations.
-     */
     (function() {
         'use strict';
 
         const Config = {
-            dataSource: 'odor_nuisance_exact.geojson',
+            dataSource: 'https://web-production-0bd7a.up.railway.app/odor', // Updated to Railway endpoint
             refreshInterval: 60000, // 1 minute in milliseconds
             map: {
                 initialZoom: 13,
@@ -158,7 +153,6 @@
             updateHeatmapRadius();
         }
 
-        // Your existing helper functions remain the same
         function convertGeoJsonToHeatmapData(geoJson) {
             const heatmapPoints = [];
 
