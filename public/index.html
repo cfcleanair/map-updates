@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Odor Nuisance Heatmap</title>
+    <link rel="preconnect" href="https://maps.googleapis.com">
+    <link rel="preconnect" href="https://maps.gstatic.com">
+    <link rel="preconnect" href="https://web-production-0bd7a.up.railway.app">
+    
     <style>
         body, html {
             height: 100%;
@@ -15,84 +19,124 @@
         #map {
             height: 100%;
             width: 100%;
+            background: #f8f8f8;
         }
 
-        #lastUpdate {
+        #status-panel {
             position: absolute;
             top: 10px;
-            right: 60px;
+            left: 10px;
             background: white;
-            padding: 8px;
+            padding: 10px;
             border-radius: 4px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
             z-index: 1000;
+            max-width: 300px;
             font-size: 12px;
         }
 
-        #loadingIndicator {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-            z-index: 2000;
+        .status-item {
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 3px;
+        }
+
+        .status-success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .status-info {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+
+        .status-warning {
+            background: #fff3e0;
+            color: #ef6c00;
+        }
+
+        .status-error {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        #loading-progress {
+            width: 100%;
+            height: 2px;
+            background: #f0f0f0;
+            margin-top: 5px;
             display: none;
-            text-align: center;
+        }
+
+        #progress-bar {
+            width: 0%;
+            height: 100%;
+            background: #4caf50;
+            transition: width 0.3s ease-in-out;
+        }
+
+        #refresh-button {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            padding: 8px 16px;
+            background: #4caf50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        #refresh-button:hover {
+            background: #45a049;
+        }
+
+        #refresh-button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
         }
 
         .spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3498db;
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #3498db;
             border-radius: 50%;
             animation: spin 1s linear infinite;
-            margin: 0 auto 10px auto;
+            margin-right: 5px;
         }
 
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-
-        .error {
-            background: #ff00001a;
-            color: #d32f2f;
-        }
     </style>
 </head>
 <body>
     <div id="map"></div>
-    <div id="lastUpdate">Last updated: Never</div>
-    <div id="loadingIndicator">
-        <div class="spinner"></div>
-        <div id="loadingText">Loading data...</div>
+    <div id="status-panel">
+        <div id="cache-status" class="status-item"></div>
+        <div id="map-status" class="status-item"></div>
+        <div id="data-status" class="status-item"></div>
+        <div id="loading-progress">
+            <div id="progress-bar"></div>
+        </div>
     </div>
+    <button id="refresh-button" onclick="manualRefresh()">Refresh Data</button>
 
-    <!-- Load environment variables first -->
     <script>
         window.ENV = {
             GOOGLE_MAPS_API_KEY: '%%GOOGLE_MAPS_API_KEY%%'
         };
-    </script>
-    
-    <!-- Load Google Maps with dynamic API key -->
-    <script defer 
-        src="https://maps.googleapis.com/maps/api/js?key=%%GOOGLE_MAPS_API_KEY%%&libraries=visualization">
-    </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
-    
-    <script>
-    (function() {
-        'use strict';
-
-        const Config = {
+        
+        window.mapConfig = {
             dataSource: 'https://web-production-0bd7a.up.railway.app/odor',
             refreshInterval: 60000,
-            retryInterval: 5000, // Retry interval for failed requests
+            retryInterval: 5000,
             map: {
                 initialZoom: 8,
                 defaultCenter: { lat: 31.4117257, lng: 35.0818155 },
@@ -133,41 +177,116 @@
                 ]
             }
         };
+    </script>
+    
+    <script defer 
+        src="https://maps.googleapis.com/maps/api/js?key=%%GOOGLE_MAPS_API_KEY%%&libraries=visualization&callback=initializeMapWhenReady">
+    </script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+    
+    <script>
+    (function() {
+        'use strict';
+
+        const CACHE_KEY = 'odor_heatmap_data';
+        const CACHE_TIMESTAMP_KEY = 'odor_heatmap_timestamp';
+        const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
 
         let map, heatmap;
-        let currentRadius = Config.heatmap.initialRadius;
+        let currentRadius = window.mapConfig.heatmap.initialRadius;
         let isInitialLoad = true;
         let retryTimeout = null;
+        let isUpdating = false;
+
+        function updateStatus(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `status-item status-${type}`;
+        }
+
+        function updateProgressBar(visible, progress = 0) {
+            const progressElement = document.getElementById('loading-progress');
+            const progressBar = document.getElementById('progress-bar');
+            progressElement.style.display = visible ? 'block' : 'none';
+            progressBar.style.width = `${progress}%`;
+        }
+
+        function loadCachedData() {
+            try {
+                const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+                if (cachedTimestamp) {
+                    const timestamp = parseInt(cachedTimestamp);
+                    const now = Date.now();
+                    const age = now - timestamp;
+                    
+                    if (age < CACHE_MAX_AGE) {
+                        const cachedData = localStorage.getItem(CACHE_KEY);
+                        if (cachedData) {
+                            updateStatus('cache-status', 
+                                `Using cached data from ${new Date(timestamp).toLocaleTimeString()}`, 
+                                'info');
+                            return JSON.parse(cachedData);
+                        }
+                    } else {
+                        updateStatus('cache-status', 'Cache expired', 'warning');
+                    }
+                }
+            } catch (error) {
+                updateStatus('cache-status', 'Error loading cache', 'error');
+                console.warn('Error loading cached data:', error);
+            }
+            return null;
+        }
+
+        function saveToCache(data) {
+            try {
+                localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+                localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+                updateStatus('cache-status', 'Cache updated', 'success');
+            } catch (error) {
+                updateStatus('cache-status', 'Failed to update cache', 'error');
+                console.warn('Error saving to cache:', error);
+            }
+        }
 
         async function fetchData(retryCount = 0) {
-            const loadingIndicator = document.getElementById('loadingIndicator');
-            const loadingText = document.getElementById('loadingText');
-            
-            try {
-                if (isInitialLoad) {
-                    loadingIndicator.style.display = 'block';
-                    loadingText.textContent = 'Loading initial data...';
-                }
+            if (isUpdating) return;
+            isUpdating = true;
+            document.getElementById('refresh-button').disabled = true;
+            updateProgressBar(true, 0);
 
-                const response = await fetch(`${Config.dataSource}?t=${Date.now()}`, {
+            try {
+                updateStatus('data-status', 'Fetching new data...', 'info');
+                updateProgressBar(true, 30);
+
+                const response = await fetch(`${window.mapConfig.dataSource}?t=${Date.now()}`, {
                     headers: {
                         'Accept-Encoding': 'gzip',
                         'Cache-Control': 'no-cache'
                     }
                 });
 
+                updateProgressBar(true, 60);
+
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
 
                 const geoJsonData = await response.json();
+                updateProgressBar(true, 90);
+                
+                saveToCache(geoJsonData);
                 updateHeatmap(geoJsonData);
-                updateLastUpdateTime();
                 
-                loadingIndicator.style.display = 'none';
+                updateStatus('data-status', 
+                    `Data updated successfully at ${new Date().toLocaleTimeString()}`, 
+                    'success');
+                updateProgressBar(false);
+                
                 isInitialLoad = false;
-                
-                // Clear any existing retry timeout
+                isUpdating = false;
+                document.getElementById('refresh-button').disabled = false;
+
                 if (retryTimeout) {
                     clearTimeout(retryTimeout);
                     retryTimeout = null;
@@ -175,67 +294,75 @@
 
             } catch (error) {
                 console.error('Data fetch failed:', error);
-                
-                if (isInitialLoad) {
-                    loadingText.textContent = `Loading failed. Retrying... (${retryCount + 1})`;
-                }
-
-                const lastUpdate = document.getElementById('lastUpdate');
-                lastUpdate.textContent = `Error: Failed to load data. Retrying...`;
-                lastUpdate.classList.add('error');
-
-                // Retry with exponential backoff
-                const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
-                retryTimeout = setTimeout(() => fetchData(retryCount + 1), retryDelay);
+                handleFetchError(error, retryCount);
             }
         }
 
-        function updateLastUpdateTime() {
-            const now = new Date();
-            const lastUpdate = document.getElementById('lastUpdate');
-            lastUpdate.textContent = `Last updated: ${now.toLocaleTimeString()}`;
-            lastUpdate.classList.remove('error');
+        function handleFetchError(error, retryCount) {
+            updateProgressBar(false);
+            isUpdating = false;
+            document.getElementById('refresh-button').disabled = false;
+
+            const cachedData = loadCachedData();
+            if (cachedData) {
+                updateHeatmap(cachedData);
+                updateStatus('data-status', 
+                    'Failed to fetch new data, using cached data', 
+                    'warning');
+            } else {
+                updateStatus('data-status', 
+                    `Failed to load data. Retry ${retryCount + 1}`, 
+                    'error');
+            }
+
+            const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+            retryTimeout = setTimeout(() => fetchData(retryCount + 1), retryDelay);
         }
 
         function updateHeatmap(geoJsonData) {
             const heatmapData = convertGeoJsonToHeatmapData(geoJsonData);
-            validateHeatmapData(heatmapData);
             
             if (!map) {
-                initializeMap(Config.map.defaultCenter);
+                initializeMap(window.mapConfig.map.defaultCenter);
             }
             
-            heatmap.setData(heatmapData);
+            requestAnimationFrame(() => {
+                heatmap.setData(heatmapData);
+            });
         }
 
         function initializeMap(center) {
-            map = new google.maps.Map(document.getElementById('map'), {
-                zoom: Config.map.initialZoom,
+            updateStatus('map-status', 'Initializing map...', 'info');
+
+            const mapOptions = {
+                zoom: window.mapConfig.map.initialZoom,
                 center: center,
                 mapTypeId: 'roadmap',
-                styles: Config.map.defaultStyles,
-                minZoom: 6,  // Restrict zoom out
-                maxZoom: 15, // Restrict zoom in
-                restriction: {  // Restrict pan area
-                    latLngBounds: {
-                        north: 33.5,
-                        south: 29.5,
-                        east: 36.0,
-                        west: 34.0
-                    }
-                }
-            });
+                styles: window.mapConfig.map.defaultStyles,
+                optimized: true,
+                backgroundColor: '#f8f8f8',
+                clickableIcons: false,
+                tilt: 0
+            };
+
+            map = new google.maps.Map(document.getElementById('map'), mapOptions);
 
             heatmap = new google.maps.visualization.HeatmapLayer({
                 map,
                 radius: currentRadius,
-                opacity: Config.heatmap.opacity,
-                gradient: Config.heatmap.gradient,
-                maxIntensity: 5  // Adjust based on your intensity scale
+                opacity: window.mapConfig.heatmap.opacity,
+                gradient: window.mapConfig.heatmap.gradient,
+                maxIntensity: 5
             });
 
-            map.addListener('zoom_changed', updateHeatmapRadius);
+            let zoomTimeout;
+            map.addListener('zoom_changed', () => {
+                clearTimeout(zoomTimeout);
+                zoomTimeout = setTimeout(updateHeatmapRadius, 100);
+            });
+            
             updateHeatmapRadius();
+            updateStatus('map-status', 'Map initialized successfully', 'success');
         }
 
         function convertGeoJsonToHeatmapData(geoJson) {
@@ -258,7 +385,6 @@
                 }
             });
 
-            // Adjust heatmap intensity if needed
             if (heatmap && maxIntensity > 0) {
                 heatmap.set('maxIntensity', maxIntensity);
             }
@@ -274,29 +400,39 @@
         function updateHeatmapRadius() {
             const zoom = map.getZoom();
             currentRadius = calculateRadiusForZoom(zoom);
-            heatmap.set('radius', currentRadius);
+            requestAnimationFrame(() => {
+                heatmap.set('radius', currentRadius);
+            });
         }
 
         function calculateRadiusForZoom(zoom) {
-            if (zoom < 9) return 15;
-            if (zoom < 11) return 12;
-            return Math.pow(2, zoom-5);
+            return Math.max(10, Math.pow(2, zoom-5));
         }
 
-        function validateHeatmapData(data) {
-            if (!data || data.length === 0) {
-                throw new Error('No valid data points found for visualization');
+        window.manualRefresh = function() {
+            if (!isUpdating) {
+                fetchData();
             }
-        }
+        };
 
-        // Initialize and start periodic updates
-        window.onload = function() {
-            fetchData(); // Initial load
+        window.initializeMapWhenReady = function() {
+            updateStatus('map-status', 'Loading map resources...', 'info');
+            
+            const cachedData = loadCachedData();
+            if (cachedData) {
+                updateHeatmap(cachedData);
+            }
+
+            fetchData();
+            
+            let lastFetchTime = Date.now();
             setInterval(() => {
-                if (!retryTimeout) { // Only start new fetch if not in retry mode
+                const now = Date.now();
+                if (!isUpdating && (now - lastFetchTime >= window.mapConfig.refreshInterval)) {
+                    lastFetchTime = now;
                     fetchData();
                 }
-            }, Config.refreshInterval);
+            }, window.mapConfig.refreshInterval);
         };
     })();
     </script>
