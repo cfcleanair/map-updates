@@ -13,7 +13,7 @@
             height: 100%;
             margin: 0;
             padding: 0;
-            font-family: Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
         }
 
         #map {
@@ -24,109 +24,88 @@
 
         #status-panel {
             position: absolute;
-            top: 10px;
-            left: 10px;
-            background: white;
-            padding: 10px;
-            border-radius: 4px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 16px;
+            border-radius: 12px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
             z-index: 1000;
             max-width: 300px;
-            font-size: 12px;
+            font-size: 13px;
+            transition: all 0.3s ease;
+        }
+
+        #status-panel:hover {
+            box-shadow: 0 6px 32px rgba(0, 0, 0, 0.15);
         }
 
         .status-item {
-            margin: 5px 0;
-            padding: 5px;
-            border-radius: 3px;
-        }
-
-        .status-success {
-            background: #e8f5e9;
-            color: #2e7d32;
+            margin: 8px 0;
+            padding: 8px 12px;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+            line-height: 1.4;
         }
 
         .status-info {
-            background: #e3f2fd;
+            background: rgba(33, 150, 243, 0.1);
             color: #1565c0;
         }
 
+        .status-success {
+            background: rgba(76, 175, 80, 0.1);
+            color: #2e7d32;
+        }
+
         .status-warning {
-            background: #fff3e0;
+            background: rgba(255, 152, 0, 0.1);
             color: #ef6c00;
         }
 
         .status-error {
-            background: #ffebee;
+            background: rgba(244, 67, 54, 0.1);
             color: #c62828;
         }
 
         #loading-progress {
             width: 100%;
-            height: 2px;
-            background: #f0f0f0;
-            margin-top: 5px;
+            height: 3px;
+            background: rgba(0, 0, 0, 0.05);
+            border-radius: 1.5px;
+            margin-top: 12px;
+            overflow: hidden;
             display: none;
         }
 
         #progress-bar {
             width: 0%;
             height: 100%;
-            background: #4caf50;
+            background: linear-gradient(90deg, #4caf50, #45a049);
+            border-radius: 1.5px;
             transition: width 0.3s ease-in-out;
         }
 
-        #refresh-button {
-            position: absolute;
-            bottom: 10px;
-            right: 10px;
-            padding: 8px 16px;
-            background: #4caf50;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        @keyframes shimmer {
+            0% { opacity: 0.5; }
+            50% { opacity: 1; }
+            100% { opacity: 0.5; }
         }
 
-        #refresh-button:hover {
-            background: #45a049;
-        }
-
-        #refresh-button:disabled {
-            background: #cccccc;
-            cursor: not-allowed;
-        }
-
-        .spinner {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border: 2px solid #f3f3f3;
-            border-top: 2px solid #3498db;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-right: 5px;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        .updating {
+            animation: shimmer 1.5s infinite;
         }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="status-panel">
-        <div id="cache-status" class="status-item"></div>
-        <div id="map-status" class="status-item"></div>
         <div id="data-status" class="status-item"></div>
         <div id="loading-progress">
             <div id="progress-bar"></div>
         </div>
     </div>
-    <button id="refresh-button" onclick="manualRefresh()" disabled>Refresh Data</button>
 
     <!-- Initial configuration -->
     <script>
@@ -211,14 +190,29 @@
                 if (element) {
                     element.textContent = message;
                     element.className = `status-item status-${type}`;
+                    if (type === 'info') {
+                        element.classList.add('updating');
+                    } else {
+                        element.classList.remove('updating');
+                    }
                 }
             }
 
             function updateProgressBar(visible, progress = 0) {
                 const progressElement = document.getElementById('loading-progress');
                 const progressBar = document.getElementById('progress-bar');
-                progressElement.style.display = visible ? 'block' : 'none';
-                progressBar.style.width = `${progress}%`;
+                
+                if (visible) {
+                    progressElement.style.display = 'block';
+                    progressBar.style.width = `${progress}%`;
+                } else {
+                    // Fade out smoothly
+                    progressBar.style.width = '100%';
+                    setTimeout(() => {
+                        progressElement.style.display = 'none';
+                        progressBar.style.width = '0%';
+                    }, 300);
+                }
             }
 
             function loadCachedData() {
@@ -232,18 +226,12 @@
                         if (age < CACHE_MAX_AGE) {
                             const cachedData = localStorage.getItem(CACHE_KEY);
                             if (cachedData) {
-                                updateStatus('cache-status', 
-                                    `Using cached data from ${new Date(timestamp).toLocaleTimeString()}`, 
-                                    'info');
                                 return JSON.parse(cachedData);
                             }
-                        } else {
-                            updateStatus('cache-status', 'Cache expired', 'warning');
                         }
                     }
                 } catch (error) {
                     console.warn('Error loading cached data:', error);
-                    updateStatus('cache-status', 'Error loading cache', 'error');
                 }
                 return null;
             }
@@ -252,10 +240,8 @@
                 try {
                     localStorage.setItem(CACHE_KEY, JSON.stringify(data));
                     localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-                    updateStatus('cache-status', 'Cache updated', 'success');
                 } catch (error) {
                     console.warn('Error saving to cache:', error);
-                    updateStatus('cache-status', 'Failed to update cache', 'error');
                 }
             }
 
@@ -263,11 +249,10 @@
                 if (isUpdating || !checkDependencies()) return;
                 
                 isUpdating = true;
-                document.getElementById('refresh-button').disabled = true;
                 updateProgressBar(true, 0);
 
                 try {
-                    updateStatus('data-status', 'Fetching new data...', 'info');
+                    updateStatus('data-status', 'Updating data...', 'info');
                     updateProgressBar(true, 30);
 
                     const response = await fetch(`${window.mapConfig.dataSource}?t=${Date.now()}`, {
@@ -290,13 +275,12 @@
                     updateHeatmap(geoJsonData);
                     
                     updateStatus('data-status', 
-                        `Data updated successfully at ${new Date().toLocaleTimeString()}`, 
+                        `Last updated: ${new Date().toLocaleTimeString()}`, 
                         'success');
                     updateProgressBar(false);
                     
                     isInitialLoad = false;
                     isUpdating = false;
-                    document.getElementById('refresh-button').disabled = false;
 
                     if (retryTimeout) {
                         clearTimeout(retryTimeout);
@@ -312,7 +296,6 @@
             function handleFetchError(error, retryCount) {
                 updateProgressBar(false);
                 isUpdating = false;
-                document.getElementById('refresh-button').disabled = false;
 
                 const cachedData = loadCachedData();
                 if (cachedData) {
@@ -322,7 +305,7 @@
                         'warning');
                 } else {
                     updateStatus('data-status', 
-                        `Failed to load data. Retry ${retryCount + 1}`, 
+                        `Failed to load data. Retrying...`, 
                         'error');
                 }
 
@@ -345,8 +328,6 @@
             }
 
             function initializeMap(center) {
-                updateStatus('map-status', 'Initializing map...', 'info');
-
                 const mapOptions = {
                     zoom: window.mapConfig.map.initialZoom,
                     center: center,
@@ -375,13 +356,11 @@
                 });
                 
                 updateHeatmapRadius();
-                updateStatus('map-status', 'Map initialized successfully', 'success');
             }
 
             function convertGeoJsonToHeatmapData(geoJson) {
                 if (!window.turf) {
                     console.error('Turf.js not loaded');
-                    updateStatus('map-status', 'Required libraries not loaded properly', 'error');
                     return [];
                 }
 
@@ -412,7 +391,6 @@
                     return heatmapPoints;
                 } catch (error) {
                     console.error('Error processing GeoJSON data:', error);
-                    updateStatus('data-status', 'Error processing map data', 'error');
                     return [];
                 }
             }
@@ -446,23 +424,13 @@
                         lastFetchTime = now;
                         fetchData();
                     }
-            }, window.mapConfig.refreshInterval);
+                }, window.mapConfig.refreshInterval);
             }
-
-            // Global functions
-            window.manualRefresh = function() {
-                if (!isUpdating && checkDependencies()) {
-                    fetchData();
-                }
-            };
 
             window.initializeMapWhenReady = function() {
                 if (!checkDependencies()) {
-                    updateStatus('map-status', 'Waiting for required libraries to load...', 'info');
                     return;
                 }
-
-                updateStatus('map-status', 'Loading map resources...', 'info');
                 
                 try {
                     const cachedData = loadCachedData();
@@ -472,14 +440,12 @@
 
                     fetchData();
                     startUpdateInterval();
-                    document.getElementById('refresh-button').disabled = false;
                     
                 } catch (error) {
                     console.error('Initialization error:', error);
-                    updateStatus('map-status', 'Failed to initialize map. Please refresh the page.', 'error');
+                    updateStatus('data-status', 'Failed to initialize map. Please refresh the page.', 'error');
                 }
             };
-
         })();
     </script>
 
@@ -514,7 +480,7 @@
 
         // Error handler for script loading
         function handleScriptError(scriptName) {
-            updateStatus('map-status', `Failed to load ${scriptName}. Please refresh the page.`, 'error');
+            updateStatus('data-status', `Failed to load ${scriptName}. Please refresh the page.`, 'error');
         }
 
         // Start loading dependencies
