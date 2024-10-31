@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Odor Nuisance Heatmap</title>
+    <style>
+        body, html {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+
+        #lastUpdate {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: white;
+            padding: 8px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 1000;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="lastUpdate">Last updated: Never</div>
+
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCNRsP7-aX1VgxoayxNVhqRRe2Mor8SQv0&libraries=visualization"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+    
+    <script>
+    /**
+     * Odor Nuisance Heatmap Visualization
+     * This module creates a dynamic heatmap visualization for odor nuisance data
+     * using Google Maps API and Turf.js for geospatial operations.
+     */
+    (function() {
+        'use strict';
+
+        const Config = {
+            dataSource: 'odor_nuisance_exact.geojson',
+            refreshInterval: 60000, // 1 minute in milliseconds
+            map: {
+                initialZoom: 13,
+                defaultStyles: [
+                    {
+                        featureType: "landscape",
+                        elementType: "geometry",
+                        stylers: [{ color: "#A8E08D" }]
+                    },
+                    {
+                        featureType: "water",
+                        elementType: "geometry",
+                        stylers: [{ color: "#a2daf2" }]
+                    },
+                    {
+                        featureType: "road",
+                        elementType: "geometry",
+                        stylers: [{ visibility: "simplified" }]
+                    },
+                    {
+                        featureType: "poi",
+                        elementType: "geometry",
+                        stylers: [{ visibility: "off" }]
+                    }
+                ]
+            },
+            heatmap: {
+                opacity: 0.7,
+                initialRadius: 20,
+                gradient: [
+                    'rgba(102, 187, 106, 0)',
+                    'rgba(255, 255, 0, 1)',
+                    'rgba(255, 191, 0, 1)',
+                    'rgba(255, 127, 0, 1)',
+                    'rgba(255, 63, 0, 1)',
+                    'rgba(255, 0, 0, 1)',
+                    'rgba(139, 0, 0, 1)'
+                ]
+            }
+        };
+
+        let map, heatmap;
+        let currentRadius = Config.heatmap.initialRadius;
+
+        /**
+         * Fetches GeoJSON data with cache-busting
+         */
+        async function fetchData() {
+            try {
+                const timestamp = new Date().getTime();
+                const response = await fetch(`${Config.dataSource}?t=${timestamp}`);
+                if (!response.ok) {
+                    throw new Error('Failed to load GeoJSON data');
+                }
+                const geoJsonData = await response.json();
+                updateHeatmap(geoJsonData);
+                updateLastUpdateTime();
+            } catch (error) {
+                console.error('Data fetch failed:', error);
+            }
+        }
+
+        /**
+         * Updates the last update timestamp display
+         */
+        function updateLastUpdateTime() {
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = 
+                `Last updated: ${now.toLocaleTimeString()}`;
+        }
+
+        /**
+         * Updates the heatmap with new data
+         */
+        function updateHeatmap(geoJsonData) {
+            const heatmapData = convertGeoJsonToHeatmapData(geoJsonData);
+            validateHeatmapData(heatmapData);
+            
+            if (!map) {
+                // First time initialization
+                const center = calculateDataCenter(heatmapData);
+                initializeMap(center);
+            }
+            
+            // Update existing heatmap data
+            heatmap.setData(heatmapData);
+        }
+
+        /**
+         * Initializes the map (called only once)
+         */
+        function initializeMap(center) {
+            map = new google.maps.Map(document.getElementById('map'), {
+                zoom: Config.map.initialZoom,
+                center,
+                mapTypeId: 'roadmap',
+                styles: Config.map.defaultStyles
+            });
+
+            heatmap = new google.maps.visualization.HeatmapLayer({
+                map,
+                radius: currentRadius,
+                opacity: Config.heatmap.opacity,
+                gradient: Config.heatmap.gradient
+            });
+
+            map.addListener('zoom_changed', updateHeatmapRadius);
+            updateHeatmapRadius();
+        }
+
+        // Your existing helper functions remain the same
+        function convertGeoJsonToHeatmapData(geoJson) {
+            const heatmapPoints = [];
+
+            turf.featureEach(geoJson, feature => {
+                if (feature.geometry?.type === "Point") {
+                    const [lng, lat] = feature.geometry.coordinates;
+                    if (isValidCoordinate(lat, lng)) {
+                        const point = new google.maps.LatLng(lat, lng);
+                        const intensity = feature.properties?.intensity;
+                        
+                        heatmapPoints.push(
+                            intensity ? { location: point, weight: parseFloat(intensity) } : point
+                        );
+                    }
+                }
+            });
+
+            return heatmapPoints;
+        }
+
+        function isValidCoordinate(lat, lng) {
+            return !isNaN(lat) && !isNaN(lng) && 
+                   Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+        }
+
+        function calculateDataCenter(points) {
+            const sum = points.reduce((acc, point) => {
+                const location = point.location || point;
+                return {
+                    lat: acc.lat + location.lat(),
+                    lng: acc.lng + location.lng(),
+                    count: acc.count + 1
+                };
+            }, { lat: 0, lng: 0, count: 0 });
+
+            return {
+                lat: sum.lat / sum.count,
+                lng: sum.lng / sum.count
+            };
+        }
+
+        function updateHeatmapRadius() {
+            const zoom = map.getZoom();
+            currentRadius = calculateRadiusForZoom(zoom);
+            heatmap.set('radius', currentRadius);
+        }
+
+        function calculateRadiusForZoom(zoom) {
+            if (zoom < 9) return 12;
+            return Math.pow(2, zoom-5);
+        }
+
+        function validateHeatmapData(data) {
+            if (data.length === 0) {
+                throw new Error('No valid data points found for visualization');
+            }
+        }
+
+        // Initialize and start periodic updates
+        window.onload = function() {
+            fetchData(); // Initial load
+            setInterval(fetchData, Config.refreshInterval); // Periodic updates
+        };
+    })();
+    </script>
+</body>
+</html>
