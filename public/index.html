@@ -126,8 +126,9 @@
             <div id="progress-bar"></div>
         </div>
     </div>
-    <button id="refresh-button" onclick="manualRefresh()">Refresh Data</button>
+    <button id="refresh-button" onclick="manualRefresh()" disabled>Refresh Data</button>
 
+    <!-- Initial configuration -->
     <script>
         window.ENV = {
             GOOGLE_MAPS_API_KEY: '%%GOOGLE_MAPS_API_KEY%%'
@@ -177,264 +178,354 @@
                 ]
             }
         };
+
+        // Track dependencies loading
+        window.depsLoaded = {
+            turf: false,
+            googleMaps: false
+        };
     </script>
-    
-    <script defer 
-        src="https://maps.googleapis.com/maps/api/js?key=%%GOOGLE_MAPS_API_KEY%%&libraries=visualization&callback=initializeMapWhenReady">
-    </script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
-    
+
+    <!-- Main application code -->
     <script>
-    (function() {
-        'use strict';
+        (function() {
+            'use strict';
 
-        const CACHE_KEY = 'odor_heatmap_data';
-        const CACHE_TIMESTAMP_KEY = 'odor_heatmap_timestamp';
-        const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
+            const CACHE_KEY = 'odor_heatmap_data';
+            const CACHE_TIMESTAMP_KEY = 'odor_heatmap_timestamp';
+            const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
 
-        let map, heatmap;
-        let currentRadius = window.mapConfig.heatmap.initialRadius;
-        let isInitialLoad = true;
-        let retryTimeout = null;
-        let isUpdating = false;
+            let map, heatmap;
+            let currentRadius = window.mapConfig.heatmap.initialRadius;
+            let isInitialLoad = true;
+            let retryTimeout = null;
+            let isUpdating = false;
+            let updateInterval = null;
 
-        function updateStatus(elementId, message, type) {
-            const element = document.getElementById(elementId);
-            element.textContent = message;
-            element.className = `status-item status-${type}`;
-        }
+            function checkDependencies() {
+                return window.depsLoaded.turf && window.depsLoaded.googleMaps;
+            }
 
-        function updateProgressBar(visible, progress = 0) {
-            const progressElement = document.getElementById('loading-progress');
-            const progressBar = document.getElementById('progress-bar');
-            progressElement.style.display = visible ? 'block' : 'none';
-            progressBar.style.width = `${progress}%`;
-        }
+            function updateStatus(elementId, message, type) {
+                const element = document.getElementById(elementId);
+                if (element) {
+                    element.textContent = message;
+                    element.className = `status-item status-${type}`;
+                }
+            }
 
-        function loadCachedData() {
-            try {
-                const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
-                if (cachedTimestamp) {
-                    const timestamp = parseInt(cachedTimestamp);
-                    const now = Date.now();
-                    const age = now - timestamp;
-                    
-                    if (age < CACHE_MAX_AGE) {
-                        const cachedData = localStorage.getItem(CACHE_KEY);
-                        if (cachedData) {
-                            updateStatus('cache-status', 
-                                `Using cached data from ${new Date(timestamp).toLocaleTimeString()}`, 
-                                'info');
-                            return JSON.parse(cachedData);
+            function updateProgressBar(visible, progress = 0) {
+                const progressElement = document.getElementById('loading-progress');
+                const progressBar = document.getElementById('progress-bar');
+                progressElement.style.display = visible ? 'block' : 'none';
+                progressBar.style.width = `${progress}%`;
+            }
+
+            function loadCachedData() {
+                try {
+                    const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+                    if (cachedTimestamp) {
+                        const timestamp = parseInt(cachedTimestamp);
+                        const now = Date.now();
+                        const age = now - timestamp;
+                        
+                        if (age < CACHE_MAX_AGE) {
+                            const cachedData = localStorage.getItem(CACHE_KEY);
+                            if (cachedData) {
+                                updateStatus('cache-status', 
+                                    `Using cached data from ${new Date(timestamp).toLocaleTimeString()}`, 
+                                    'info');
+                                return JSON.parse(cachedData);
+                            }
+                        } else {
+                            updateStatus('cache-status', 'Cache expired', 'warning');
                         }
-                    } else {
-                        updateStatus('cache-status', 'Cache expired', 'warning');
                     }
+                } catch (error) {
+                    console.warn('Error loading cached data:', error);
+                    updateStatus('cache-status', 'Error loading cache', 'error');
                 }
-            } catch (error) {
-                updateStatus('cache-status', 'Error loading cache', 'error');
-                console.warn('Error loading cached data:', error);
+                return null;
             }
-            return null;
-        }
 
-        function saveToCache(data) {
-            try {
-                localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-                localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-                updateStatus('cache-status', 'Cache updated', 'success');
-            } catch (error) {
-                updateStatus('cache-status', 'Failed to update cache', 'error');
-                console.warn('Error saving to cache:', error);
+            function saveToCache(data) {
+                try {
+                    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+                    localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+                    updateStatus('cache-status', 'Cache updated', 'success');
+                } catch (error) {
+                    console.warn('Error saving to cache:', error);
+                    updateStatus('cache-status', 'Failed to update cache', 'error');
+                }
             }
-        }
 
-        async function fetchData(retryCount = 0) {
-            if (isUpdating) return;
-            isUpdating = true;
-            document.getElementById('refresh-button').disabled = true;
-            updateProgressBar(true, 0);
+            async function fetchData(retryCount = 0) {
+                if (isUpdating || !checkDependencies()) return;
+                
+                isUpdating = true;
+                document.getElementById('refresh-button').disabled = true;
+                updateProgressBar(true, 0);
 
-            try {
-                updateStatus('data-status', 'Fetching new data...', 'info');
-                updateProgressBar(true, 30);
+                try {
+                    updateStatus('data-status', 'Fetching new data...', 'info');
+                    updateProgressBar(true, 30);
 
-                const response = await fetch(`${window.mapConfig.dataSource}?t=${Date.now()}`, {
-                    headers: {
-                        'Accept-Encoding': 'gzip',
-                        'Cache-Control': 'no-cache'
+                    const response = await fetch(`${window.mapConfig.dataSource}?t=${Date.now()}`, {
+                        headers: {
+                            'Accept-Encoding': 'gzip',
+                            'Cache-Control': 'no-cache'
+                        }
+                    });
+
+                    updateProgressBar(true, 60);
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
                     }
-                });
 
-                updateProgressBar(true, 60);
+                    const geoJsonData = await response.json();
+                    updateProgressBar(true, 90);
+                    
+                    saveToCache(geoJsonData);
+                    updateHeatmap(geoJsonData);
+                    
+                    updateStatus('data-status', 
+                        `Data updated successfully at ${new Date().toLocaleTimeString()}`, 
+                        'success');
+                    updateProgressBar(false);
+                    
+                    isInitialLoad = false;
+                    isUpdating = false;
+                    document.getElementById('refresh-button').disabled = false;
 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    if (retryTimeout) {
+                        clearTimeout(retryTimeout);
+                        retryTimeout = null;
+                    }
+
+                } catch (error) {
+                    console.error('Data fetch failed:', error);
+                    handleFetchError(error, retryCount);
                 }
+            }
 
-                const geoJsonData = await response.json();
-                updateProgressBar(true, 90);
-                
-                saveToCache(geoJsonData);
-                updateHeatmap(geoJsonData);
-                
-                updateStatus('data-status', 
-                    `Data updated successfully at ${new Date().toLocaleTimeString()}`, 
-                    'success');
+            function handleFetchError(error, retryCount) {
                 updateProgressBar(false);
-                
-                isInitialLoad = false;
                 isUpdating = false;
                 document.getElementById('refresh-button').disabled = false;
 
-                if (retryTimeout) {
-                    clearTimeout(retryTimeout);
-                    retryTimeout = null;
+                const cachedData = loadCachedData();
+                if (cachedData) {
+                    updateHeatmap(cachedData);
+                    updateStatus('data-status', 
+                        'Failed to fetch new data, using cached data', 
+                        'warning');
+                } else {
+                    updateStatus('data-status', 
+                        `Failed to load data. Retry ${retryCount + 1}`, 
+                        'error');
                 }
 
-            } catch (error) {
-                console.error('Data fetch failed:', error);
-                handleFetchError(error, retryCount);
-            }
-        }
-
-        function handleFetchError(error, retryCount) {
-            updateProgressBar(false);
-            isUpdating = false;
-            document.getElementById('refresh-button').disabled = false;
-
-            const cachedData = loadCachedData();
-            if (cachedData) {
-                updateHeatmap(cachedData);
-                updateStatus('data-status', 
-                    'Failed to fetch new data, using cached data', 
-                    'warning');
-            } else {
-                updateStatus('data-status', 
-                    `Failed to load data. Retry ${retryCount + 1}`, 
-                    'error');
+                const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+                retryTimeout = setTimeout(() => fetchData(retryCount + 1), retryDelay);
             }
 
-            const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
-            retryTimeout = setTimeout(() => fetchData(retryCount + 1), retryDelay);
-        }
-
-        function updateHeatmap(geoJsonData) {
-            const heatmapData = convertGeoJsonToHeatmapData(geoJsonData);
-            
-            if (!map) {
-                initializeMap(window.mapConfig.map.defaultCenter);
+            function updateHeatmap(geoJsonData) {
+                const heatmapData = convertGeoJsonToHeatmapData(geoJsonData);
+                
+                if (!map) {
+                    initializeMap(window.mapConfig.map.defaultCenter);
+                }
+                
+                if (heatmapData.length > 0) {
+                    requestAnimationFrame(() => {
+                        heatmap.setData(heatmapData);
+                    });
+                }
             }
-            
-            requestAnimationFrame(() => {
-                heatmap.setData(heatmapData);
-            });
-        }
 
-        function initializeMap(center) {
-            updateStatus('map-status', 'Initializing map...', 'info');
+            function initializeMap(center) {
+                updateStatus('map-status', 'Initializing map...', 'info');
 
-            const mapOptions = {
-                zoom: window.mapConfig.map.initialZoom,
-                center: center,
-                mapTypeId: 'roadmap',
-                styles: window.mapConfig.map.defaultStyles,
-                optimized: true,
-                backgroundColor: '#f8f8f8',
-                clickableIcons: false,
-                tilt: 0
-            };
+                const mapOptions = {
+                    zoom: window.mapConfig.map.initialZoom,
+                    center: center,
+                    mapTypeId: 'roadmap',
+                    styles: window.mapConfig.map.defaultStyles,
+                    optimized: true,
+                    backgroundColor: '#f8f8f8',
+                    clickableIcons: false,
+                    tilt: 0
+                };
 
-            map = new google.maps.Map(document.getElementById('map'), mapOptions);
+                map = new google.maps.Map(document.getElementById('map'), mapOptions);
 
-            heatmap = new google.maps.visualization.HeatmapLayer({
-                map,
-                radius: currentRadius,
-                opacity: window.mapConfig.heatmap.opacity,
-                gradient: window.mapConfig.heatmap.gradient,
-                maxIntensity: 5
-            });
+                heatmap = new google.maps.visualization.HeatmapLayer({
+                    map,
+                    radius: currentRadius,
+                    opacity: window.mapConfig.heatmap.opacity,
+                    gradient: window.mapConfig.heatmap.gradient,
+                    maxIntensity: 5
+                });
 
-            let zoomTimeout;
-            map.addListener('zoom_changed', () => {
-                clearTimeout(zoomTimeout);
-                zoomTimeout = setTimeout(updateHeatmapRadius, 100);
-            });
-            
-            updateHeatmapRadius();
-            updateStatus('map-status', 'Map initialized successfully', 'success');
-        }
+                let zoomTimeout;
+                map.addListener('zoom_changed', () => {
+                    clearTimeout(zoomTimeout);
+                    zoomTimeout = setTimeout(updateHeatmapRadius, 100);
+                });
+                
+                updateHeatmapRadius();
+                updateStatus('map-status', 'Map initialized successfully', 'success');
+            }
 
-        function convertGeoJsonToHeatmapData(geoJson) {
-            const heatmapPoints = [];
-            let maxIntensity = 0;
+            function convertGeoJsonToHeatmapData(geoJson) {
+                if (!window.turf) {
+                    console.error('Turf.js not loaded');
+                    updateStatus('map-status', 'Required libraries not loaded properly', 'error');
+                    return [];
+                }
 
-            turf.featureEach(geoJson, feature => {
-                if (feature.geometry?.type === "Point") {
-                    const [lng, lat] = feature.geometry.coordinates;
-                    if (isValidCoordinate(lat, lng)) {
-                        const point = new google.maps.LatLng(lat, lng);
-                        const intensity = feature.properties?.intensity || 1;
-                        
-                        maxIntensity = Math.max(maxIntensity, intensity);
-                        heatmapPoints.push({
-                            location: point,
-                            weight: parseFloat(intensity)
-                        });
+                const heatmapPoints = [];
+                let maxIntensity = 0;
+
+                try {
+                    window.turf.featureEach(geoJson, feature => {
+                        if (feature.geometry?.type === "Point") {
+                            const [lng, lat] = feature.geometry.coordinates;
+                            if (isValidCoordinate(lat, lng)) {
+                                const point = new google.maps.LatLng(lat, lng);
+                                const intensity = feature.properties?.intensity || 1;
+                                
+                                maxIntensity = Math.max(maxIntensity, intensity);
+                                heatmapPoints.push({
+                                    location: point,
+                                    weight: parseFloat(intensity)
+                                });
+                            }
+                        }
+                    });
+
+                    if (heatmap && maxIntensity > 0) {
+                        heatmap.set('maxIntensity', maxIntensity);
                     }
+
+                    return heatmapPoints;
+                } catch (error) {
+                    console.error('Error processing GeoJSON data:', error);
+                    updateStatus('data-status', 'Error processing map data', 'error');
+                    return [];
                 }
-            });
-
-            if (heatmap && maxIntensity > 0) {
-                heatmap.set('maxIntensity', maxIntensity);
             }
 
-            return heatmapPoints;
-        }
-
-        function isValidCoordinate(lat, lng) {
-            return !isNaN(lat) && !isNaN(lng) && 
-                   Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
-        }
-
-        function updateHeatmapRadius() {
-            const zoom = map.getZoom();
-            currentRadius = calculateRadiusForZoom(zoom);
-            requestAnimationFrame(() => {
-                heatmap.set('radius', currentRadius);
-            });
-        }
-
-        function calculateRadiusForZoom(zoom) {
-            return Math.max(10, Math.pow(2, zoom-5));
-        }
-
-        window.manualRefresh = function() {
-            if (!isUpdating) {
-                fetchData();
-            }
-        };
-
-        window.initializeMapWhenReady = function() {
-            updateStatus('map-status', 'Loading map resources...', 'info');
-            
-            const cachedData = loadCachedData();
-            if (cachedData) {
-                updateHeatmap(cachedData);
+            function isValidCoordinate(lat, lng) {
+                return !isNaN(lat) && !isNaN(lng) && 
+                       Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
             }
 
-            fetchData();
-            
-            let lastFetchTime = Date.now();
-            setInterval(() => {
-                const now = Date.now();
-                if (!isUpdating && (now - lastFetchTime >= window.mapConfig.refreshInterval)) {
-                    lastFetchTime = now;
+            function updateHeatmapRadius() {
+                const zoom = map.getZoom();
+                currentRadius = calculateRadiusForZoom(zoom);
+                requestAnimationFrame(() => {
+                    heatmap.set('radius', currentRadius);
+                });
+            }
+
+            function calculateRadiusForZoom(zoom) {
+                return Math.max(10, Math.pow(2, zoom-5));
+            }
+
+            function startUpdateInterval() {
+                if (updateInterval) {
+                    clearInterval(updateInterval);
+                }
+                
+                let lastFetchTime = Date.now();
+                updateInterval = setInterval(() => {
+                    const now = Date.now();
+                    if (!isUpdating && (now - lastFetchTime >= window.mapConfig.refreshInterval)) {
+                        lastFetchTime = now;
+                        fetchData();
+                    }
+            }, window.mapConfig.refreshInterval);
+            }
+
+            // Global functions
+            window.manualRefresh = function() {
+                if (!isUpdating && checkDependencies()) {
                     fetchData();
                 }
-            }, window.mapConfig.refreshInterval);
+            };
+
+            window.initializeMapWhenReady = function() {
+                if (!checkDependencies()) {
+                    updateStatus('map-status', 'Waiting for required libraries to load...', 'info');
+                    return;
+                }
+
+                updateStatus('map-status', 'Loading map resources...', 'info');
+                
+                try {
+                    const cachedData = loadCachedData();
+                    if (cachedData) {
+                        updateHeatmap(cachedData);
+                    }
+
+                    fetchData();
+                    startUpdateInterval();
+                    document.getElementById('refresh-button').disabled = false;
+                    
+                } catch (error) {
+                    console.error('Initialization error:', error);
+                    updateStatus('map-status', 'Failed to initialize map. Please refresh the page.', 'error');
+                }
+            };
+
+        })();
+    </script>
+
+    <!-- Load dependencies -->
+    <script>
+        // Function to load Google Maps
+        function loadGoogleMapsScript() {
+            const script = document.createElement('script');
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${window.ENV.GOOGLE_MAPS_API_KEY}&libraries=visualization&callback=googleMapsLoaded`;
+            script.async = true;
+            document.head.appendChild(script);
+        }
+
+        // Callback for Google Maps load
+        window.googleMapsLoaded = function() {
+            window.depsLoaded.googleMaps = true;
+            checkAllDependencies();
         };
-    })();
+
+        // Callback for Turf.js load
+        window.turfLoaded = function() {
+            window.depsLoaded.turf = true;
+            loadGoogleMapsScript();
+        };
+
+        // Check if all dependencies are loaded
+        function checkAllDependencies() {
+            if (window.depsLoaded.turf && window.depsLoaded.googleMaps) {
+                window.initializeMapWhenReady();
+            }
+        }
+
+        // Error handler for script loading
+        function handleScriptError(scriptName) {
+            updateStatus('map-status', `Failed to load ${scriptName}. Please refresh the page.`, 'error');
+        }
+
+        // Start loading dependencies
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load Turf.js first
+            const turfScript = document.createElement('script');
+            turfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js';
+            turfScript.onload = window.turfLoaded;
+            turfScript.onerror = () => handleScriptError('Turf.js');
+            document.head.appendChild(turfScript);
+        });
     </script>
 </body>
 </html>
