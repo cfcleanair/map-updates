@@ -2,7 +2,7 @@ from flask import Flask, jsonify, Response
 from flask_cors import CORS
 import schedule
 import threading
-import time
+import time as time_module  # Renamed to avoid conflict
 from google.oauth2 import service_account
 import pandas as pd
 import geopandas as gpd
@@ -295,7 +295,7 @@ def run_schedule():
     """Run the scheduler in a separate thread"""
     while True:
         schedule.run_pending()
-        time.sleep(1)
+        time_module.sleep(1)  # Using renamed time module
 
 def initialize_app():
     """Initialize the application with data and start scheduler"""
@@ -318,12 +318,13 @@ def initialize_app():
         
     except Exception as e:
         print(f"Error during initialization: {str(e)}")
-        raise
+        import traceback
+        print(traceback.format_exc())
 
 # Initialize the app when module loads
 initialize_app()
 
 if __name__ == "__main__":
     # Run Flask app
-    port = int(os.getenv('PORT', 5000))
+    port = int(os.getenv('PORT', 8080))  # Changed default port to 8080 to match gunicorn
     app.run(host='0.0.0.0', port=port)
