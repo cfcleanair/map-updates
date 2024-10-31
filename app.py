@@ -15,10 +15,11 @@ from gspread_dataframe import get_as_dataframe
 from typing import Dict, Any, List
 import os
 
+# Initialize Flask app
 app = Flask(__name__)
 CORS(app)
 
-# Global variables to store the latest data
+# Global variables
 latest_odor_geojson = None
 latest_waste_geojson = None
 last_update_time = None
@@ -122,19 +123,24 @@ def update_data():
     global latest_odor_geojson, latest_waste_geojson, last_update_time
     
     try:
-        print(f"\nUpdating data at {datetime.now()}")
+        print(f"\n[{datetime.now()}] Starting data update...")
         
         # Get credentials and connect to Google Sheets
+        print("Getting Google credentials...")
         creds = get_google_credentials()
+        print("Authorizing with Google Sheets...")
         gc = gspread.authorize(creds)
         
         # Open the Google Sheet
+        print("Opening Google Sheet...")
         sheet_url = "https://docs.google.com/spreadsheets/d/1i2Z4V07JzhkZSGub1acEJy6IZueKO8Imviih9_MO3tc/edit?gid=0#gid=0"
         spreadsheet = gc.open_by_url(sheet_url)
         worksheet = spreadsheet.worksheet('Sheet1')
         
         # Load data into DataFrame
+        print("Loading data into DataFrame...")
         df_original = get_as_dataframe(worksheet)
+        print(f"Loaded {len(df_original)} rows from Google Sheet")
         
         # Verify required columns
         required_columns = [
@@ -146,11 +152,14 @@ def update_data():
             'צבע העשן'
         ]
         
+        print("Checking required columns...")
         missing_columns = [col for col in required_columns if col not in df_original.columns]
         if missing_columns:
             raise ValueError(f"Missing columns: {missing_columns}")
+        print("All required columns present")
         
         # Process datetime
+        print("Processing datetime...")
         df_original['datetime'] = pd.to_datetime(
             df_original['תאריך שליחת הדיווח'].astype(str) + ' ' + df_original['שעת שליחת הדיווח'].astype(str),
             format='%d/%m/%Y %H:%M:%S',
@@ -163,36 +172,46 @@ def update_data():
         df_original['time_elapsed_minutes'] = df_original['time_elapsed_minutes'].clip(lower=0, upper=10000)
         
         # Split data by report type
+        print("Splitting data by report type...")
         odor_nuisance_df = df_original[df_original['סוג דיווח'] == 'מפגע ריח']
         waste_nuisance_df = df_original[df_original['סוג דיווח'] == 'מפגע פסולת']
+        print(f"Found {len(odor_nuisance_df)} odor reports and {len(waste_nuisance_df)} waste reports")
         
         # Filter valid coordinates
+        print("Filtering valid coordinates...")
         odor_nuisance_df = odor_nuisance_df[odor_nuisance_df['קואורדינטות'].notna()]
         waste_nuisance_df = waste_nuisance_df[waste_nuisance_df['קואורדינטות'].notna()]
         
         odor_nuisance_df = odor_nuisance_df[~odor_nuisance_df['קואורדינטות'].astype(str).str.contains('המיקום לא נמצא', na=False)]
         waste_nuisance_df = waste_nuisance_df[~waste_nuisance_df['קואורדינטות'].astype(str).str.contains('המיקום לא נמצא', na=False)]
+        print(f"After filtering: {len(odor_nuisance_df)} valid odor reports and {len(waste_nuisance_df)} valid waste reports")
         
         # Process waste nuisance data
+        print("Processing waste nuisance data...")
         valid_smoke_colors = ['לבן', 'אפור', 'שחור']
         waste_nuisance_df = waste_nuisance_df[
             waste_nuisance_df['צבע העשן'].isin(valid_smoke_colors) &
             waste_nuisance_df['צבע העשן'].notna() &
             (waste_nuisance_df['צבע העשן'] != 'אין עשן')
         ]
+        print(f"After smoke color filtering: {len(waste_nuisance_df)} waste reports")
         
         # Process coordinates
+        print("Processing coordinates...")
         odor_nuisance_df = split_coordinates(odor_nuisance_df)
         waste_nuisance_df = split_coordinates(waste_nuisance_df)
         
         # Process intensity
+        print("Processing intensity values...")
         odor_nuisance_df['עוצמת הריח'] = pd.to_numeric(odor_nuisance_df['עוצמת הריח'], errors='coerce').fillna(0)
         odor_nuisance_df['intensity'] = odor_nuisance_df.apply(calculate_intensity, axis=1)
         
         # Randomize coordinates
+        print("Randomizing coordinates...")
         odor_nuisance_df = randomize_coordinates(odor_nuisance_df)
         
         # Create GeoDataFrames
+        print("Creating GeoDataFrames...")
         odor_gdf = gpd.GeoDataFrame(
             odor_nuisance_df,
             geometry=gpd.points_from_xy(odor_nuisance_df['lon'], odor_nuisance_df['lat']),
@@ -205,14 +224,19 @@ def update_data():
         )
         
         # Update global variables
+        print("Converting to GeoJSON...")
         latest_odor_geojson = create_geojson_no_buffer(odor_gdf)
         latest_waste_geojson = create_geojson_no_buffer(waste_gdf)
         last_update_time = datetime.now()
         
-        print("Data update completed successfully")
+        print(f"[{datetime.now()}] Data update completed successfully")
+        print(f"Final counts: {len(odor_gdf)} odor points, {len(waste_gdf)} waste points")
         
     except Exception as e:
-        print(f"Error updating data: {str(e)}")
+        print(f"[{datetime.now()}] ERROR updating data: {str(e)}")
+        print("Error details:", e.__class__.__name__)
+        import traceback
+        print(traceback.format_exc())
 
 @app.route('/')
 def home():
@@ -273,17 +297,33 @@ def run_schedule():
         schedule.run_pending()
         time.sleep(1)
 
+def initialize_app():
+    """Initialize the application with data and start scheduler"""
+    print("Initializing application...")
+    try:
+        # Initial data update
+        print("Performing initial data fetch...")
+        update_data()
+        print(f"Initial data fetch completed at {datetime.now()}")
+        
+        # Schedule updates every 1 minute
+        schedule.every(1).minutes.do(update_data)
+        print("Scheduled updates every 1 minute")
+        
+        # Start scheduler in background
+        scheduler_thread = threading.Thread(target=run_schedule)
+        scheduler_thread.daemon = True
+        scheduler_thread.start()
+        print("Scheduler started successfully")
+        
+    except Exception as e:
+        print(f"Error during initialization: {str(e)}")
+        raise
+
+# Initialize the app when module loads
+initialize_app()
+
 if __name__ == "__main__":
-    # Initial data update
-    update_data()
-    
-    # Schedule updates every 2 minutes
-    schedule.every(2).minutes.do(update_data)
-    
-    # Start the scheduler in a separate thread
-    scheduler_thread = threading.Thread(target=run_schedule)
-    scheduler_thread.daemon = True
-    scheduler_thread.start()
-    
     # Run Flask app
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
+    port = int(os.getenv('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
