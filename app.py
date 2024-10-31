@@ -1,8 +1,10 @@
 from flask import Flask, jsonify, Response
 from flask_cors import CORS
+from flask_caching import Cache
+import gzip
 import schedule
 import threading
-import time as time_module  # Renamed to avoid conflict
+import time as time_module
 from google.oauth2 import service_account
 import pandas as pd
 import geopandas as gpd
@@ -15,9 +17,13 @@ from gspread_dataframe import get_as_dataframe
 from typing import Dict, Any, List
 import os
 
-# Initialize Flask app
+# Initialize Flask app with caching
 app = Flask(__name__)
 CORS(app)
+cache = Cache(app, config={
+    'CACHE_TYPE': 'simple',
+    'CACHE_DEFAULT_TIMEOUT': 60  # Cache for 1 minute
+})
 
 # Global variables
 latest_odor_geojson = None
@@ -32,6 +38,20 @@ class CustomJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, timedelta):
             return str(obj)
         return super().default(obj)
+
+def gzip_response(data):
+    """Compress response data using gzip"""
+    gzip_buffer = gzip.compress(json.dumps(data, cls=CustomJSONEncoder).encode('utf-8'))
+    return Response(
+        gzip_buffer,
+        mimetype='application/json',
+        headers={
+            'Access-Control-Allow-Origin': '*',
+            'Content-Encoding': 'gzip',
+            'Last-Modified': last_update_time.strftime("%a, %d %b %Y %H:%M:%S GMT"),
+            'Cache-Control': 'public, max-age=60'  # Allow client caching for 1 minute
+        }
+    )
 
 def get_google_credentials():
     """Get Google credentials from environment variable"""
@@ -229,6 +249,10 @@ def update_data():
         latest_waste_geojson = create_geojson_no_buffer(waste_gdf)
         last_update_time = datetime.now()
         
+        # Clear the cache when new data arrives
+        cache.delete('odor_data')
+        cache.delete('waste_data')
+        
         print(f"[{datetime.now()}] Data update completed successfully")
         print(f"Final counts: {len(odor_gdf)} odor points, {len(waste_gdf)} waste points")
         
@@ -252,34 +276,22 @@ def home():
     })
 
 @app.route('/odor')
+@cache.cached(timeout=60, key_prefix='odor_data')
 def serve_odor_geojson():
     """Serve the latest odor nuisance GeoJSON data"""
     if latest_odor_geojson is None:
         return jsonify({"error": "No data available"}), 503
     
-    return Response(
-        json.dumps(latest_odor_geojson, cls=CustomJSONEncoder),
-        mimetype='application/json',
-        headers={
-            'Access-Control-Allow-Origin': '*',
-            'Last-Modified': last_update_time.strftime("%a, %d %b %Y %H:%M:%S GMT")
-        }
-    )
+    return gzip_response(latest_odor_geojson)
 
 @app.route('/waste')
+@cache.cached(timeout=60, key_prefix='waste_data')
 def serve_waste_geojson():
     """Serve the latest waste nuisance GeoJSON data"""
     if latest_waste_geojson is None:
         return jsonify({"error": "No data available"}), 503
     
-    return Response(
-        json.dumps(latest_waste_geojson, cls=CustomJSONEncoder),
-        mimetype='application/json',
-        headers={
-            'Access-Control-Allow-Origin': '*',
-            'Last-Modified': last_update_time.strftime("%a, %d %b %Y %H:%M:%S GMT")
-        }
-    )
+    return gzip_response(latest_waste_geojson)
 
 @app.route('/status')
 def server_status():
@@ -295,7 +307,7 @@ def run_schedule():
     """Run the scheduler in a separate thread"""
     while True:
         schedule.run_pending()
-        time_module.sleep(1)  # Using renamed time module
+        time_module.sleep(1)
 
 def initialize_app():
     """Initialize the application with data and start scheduler"""
@@ -326,5 +338,5 @@ initialize_app()
 
 if __name__ == "__main__":
     # Run Flask app
-    port = int(os.getenv('PORT', 8080))  # Changed default port to 8080 to match gunicorn
+    port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
