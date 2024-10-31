@@ -1,544 +1,518 @@
-< !DOCTYPE html >
-    <
-    html lang = "en" >
-    <
-    head >
-    <
-    meta charset = "UTF-8" >
-    <
-    meta name = "viewport"
-content = "width=device-width, initial-scale=1.0" >
-    <
-    title > Odor Nuisance Heatmap < /title> <
-    link rel = "preconnect"
-href = "https://maps.googleapis.com" >
-    <
-    link rel = "preconnect"
-href = "https://maps.gstatic.com" >
-    <
-    link rel = "preconnect"
-href = "https://web-production-0bd7a.up.railway.app" >
-
-    <
-    style >
-    body, html {
-        height: 100 % ;
-        margin: 0;
-        padding: 0;
-        font - family: -apple - system,
-        BlinkMacSystemFont,
-        'Segoe UI',
-        Roboto,
-        Oxygen,
-        Ubuntu,
-        Cantarell,
-        sans - serif;
-    }
-
-#map {
-    height: 100 % ;
-    width: 100 % ;
-    background: #f8f8f8;
-}
-
-#status - panel {
-    position: absolute;
-    top: 120 px; /* Moved down to avoid Google Maps controls */
-    left: 20 px;
-    background: rgba(255, 255, 255, 0.95);
-    padding: 16 px;
-    border - radius: 12 px;
-    box - shadow: 0 4 px 24 px rgba(0, 0, 0, 0.1);
-    backdrop - filter: blur(10 px);
-    z - index: 1000;
-    max - width: 300 px;
-    font - size: 13 px;
-    transition: all 0.3 s ease;
-}
-
-#status - panel: hover {
-        box - shadow: 0 6 px 32 px rgba(0, 0, 0, 0.15);
-    }
-
-    .status - item {
-        margin: 8 px 0;
-        padding: 8 px 12 px;
-        border - radius: 8 px;
-        transition: all 0.2 s ease;
-        line - height: 1.4;
-    }
-
-    .status - info {
-        background: rgba(33, 150, 243, 0.1);
-        color: #1565c0;
-    }
-
-    .status-success {
-        background: rgba(76, 175, 80, 0.1);
-        color: # 2e7 d32;
-    }
-
-    .status - warning {
-        background: rgba(255, 152, 0, 0.1);
-        color: #ef6c00;
-    }
-
-    .status - error {
-        background: rgba(244, 67, 54, 0.1);
-        color: #c62828;
-    }
-
-#loading - progress {
-    width: 100 % ;
-    height: 3 px;
-    background: rgba(0, 0, 0, 0.05);
-    border - radius: 1.5 px;
-    margin - top: 8 px;
-    overflow: hidden;
-    display: none;
-}
-
-#progress - bar {
-    width: 0 % ;
-    height: 100 % ;
-    background: linear - gradient(90 deg, #4caf50, # 45 a049);
-    border - radius: 1.5 px;
-    transition: width 0.3 s ease - in - out;
-}
-
-@keyframes shimmer {
-    0 % {
-        opacity: 0.5;
-    }
-    50 % {
-        opacity: 1;
-    }
-    100 % {
-        opacity: 0.5;
-    }
-}
-
-.updating {
-    animation: shimmer 1.5 s infinite;
-} <
-/style>
-
-<
-/head> <
-body >
-    <
-    div id = "map" > < /div> <
-    div id = "status-panel" >
-    <
-    div id = "data-status"
-class = "status-item" > < /div> <
-div id = "loading-progress" >
-    <
-    div id = "progress-bar" > < /div> <
-    /div> <
-    /div>
-
-    <
-    !--Initial configuration-- >
-    <
-    script >
-    window.ENV = {
-        GOOGLE_MAPS_API_KEY: '%%GOOGLE_MAPS_API_KEY%%'
-    };
-
-window.mapConfig = {
-    dataSource: 'https://web-production-0bd7a.up.railway.app/odor',
-    refreshInterval: 60000,
-    retryInterval: 5000,
-    map: {
-        initialZoom: 8,
-        defaultCenter: {
-            lat: 31.4117257,
-            lng: 35.0818155
-        },
-        defaultStyles: [{
-                featureType: "landscape",
-                elementType: "geometry",
-                stylers: [{
-                    color: "#A8E08D"
-                }]
-            },
-            {
-                featureType: "water",
-                elementType: "geometry",
-                stylers: [{
-                    color: "#a2daf2"
-                }]
-            },
-            {
-                featureType: "road",
-                elementType: "geometry",
-                stylers: [{
-                    visibility: "simplified"
-                }]
-            },
-            {
-                featureType: "poi",
-                elementType: "geometry",
-                stylers: [{
-                    visibility: "off"
-                }]
-            }
-        ]
-    },
-    heatmap: {
-        opacity: 0.7,
-        initialRadius: 20,
-        gradient: [
-            'rgba(102, 187, 106, 0)',
-            'rgba(255, 255, 0, 1)',
-            'rgba(255, 191, 0, 1)',
-            'rgba(255, 127, 0, 1)',
-            'rgba(255, 63, 0, 1)',
-            'rgba(255, 0, 0, 1)',
-            'rgba(139, 0, 0, 1)'
-        ]
-    }
-};
-
-// Track dependencies loading
-window.depsLoaded = {
-    turf: false,
-    googleMaps: false
-}; <
-/script>
-
-<
-!--Main application code-- >
-<
-script >
-    (function() {
-        'use strict';
-
-        const CACHE_KEY = 'odor_heatmap_data';
-        const CACHE_TIMESTAMP_KEY = 'odor_heatmap_timestamp';
-        const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
-
-        let map, heatmap;
-        let currentRadius = window.mapConfig.heatmap.initialRadius;
-        let isInitialLoad = true;
-        let retryTimeout = null;
-        let isUpdating = false;
-        let updateInterval = null;
-
-        function checkDependencies() {
-            return window.depsLoaded.turf && window.depsLoaded.googleMaps;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Odor Nuisance Heatmap</title>
+    <link rel="preconnect" href="https://maps.googleapis.com">
+    <link rel="preconnect" href="https://maps.gstatic.com">
+    <link rel="preconnect" href="https://web-production-0bd7a.up.railway.app">
+    
+    <style>
+        body, html {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
         }
 
-        function updateStatus(elementId, message, type) {
-            const element = document.getElementById(elementId);
-            if (element) {
-                element.textContent = message;
-                element.className = `status-item status-${type}`;
-                if (type === 'info') {
-                    element.classList.add('updating');
-                } else {
-                    element.classList.remove('updating');
+        #map {
+            height: 100%;
+            width: 100%;
+            background: #f8f8f8;
+        }
+
+        #status-panel {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 16px;
+            border-radius: 12px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            max-width: 300px;
+            font-size: 13px;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 10px; /* Space below default controls */
+        }
+
+        #status-panel:hover {
+            box-shadow: 0 6px 32px rgba(0, 0, 0, 0.15);
+        }
+
+        .status-item {
+            padding: 8px 12px;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+            line-height: 1.4;
+        }
+
+        .status-info {
+            background: rgba(33, 150, 243, 0.1);
+            color: #1565c0;
+        }
+
+        .status-success {
+            background: rgba(76, 175, 80, 0.1);
+            color: #2e7d32;
+        }
+
+        .status-warning {
+            background: rgba(255, 152, 0, 0.1);
+            color: #ef6c00;
+        }
+
+        .status-error {
+            background: rgba(244, 67, 54, 0.1);
+            color: #c62828;
+        }
+
+        #loading-progress {
+            width: 100%;
+            height: 3px;
+            background: rgba(0, 0, 0, 0.05);
+            border-radius: 1.5px;
+            overflow: hidden;
+            display: none;
+        }
+
+        #progress-bar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #4caf50, #45a049);
+            border-radius: 1.5px;
+            transition: width 0.3s ease-in-out;
+        }
+
+        @keyframes shimmer {
+            0% {
+                opacity: 0.5;
+            }
+            50% {
+                opacity: 1;
+            }
+            100% {
+                opacity: 0.5;
+            }
+        }
+
+        .updating {
+            animation: shimmer 1.5s infinite;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 600px) {
+            #status-panel {
+                max-width: 90%;
+                margin-left: 5%;
+                margin-right: 5%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="map">
+        <div id="status-panel">
+            <div id="data-status" class="status-item status-info"></div>
+            <div id="loading-progress">
+                <div id="progress-bar"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Initial configuration -->
+    <script>
+        window.ENV = {
+            GOOGLE_MAPS_API_KEY: '%%GOOGLE_MAPS_API_KEY%%'
+        };
+
+        window.mapConfig = {
+            dataSource: 'https://web-production-0bd7a.up.railway.app/odor',
+            refreshInterval: 60000,
+            retryInterval: 5000,
+            map: {
+                initialZoom: 8,
+                defaultCenter: {
+                    lat: 31.4117257,
+                    lng: 35.0818155
+                },
+                defaultStyles: [
+                    {
+                        featureType: "landscape",
+                        elementType: "geometry",
+                        stylers: [{ color: "#A8E08D" }]
+                    },
+                    {
+                        featureType: "water",
+                        elementType: "geometry",
+                        stylers: [{ color: "#a2daf2" }]
+                    },
+                    {
+                        featureType: "road",
+                        elementType: "geometry",
+                        stylers: [{ visibility: "simplified" }]
+                    },
+                    {
+                        featureType: "poi",
+                        elementType: "geometry",
+                        stylers: [{ visibility: "off" }]
+                    }
+                ]
+            },
+            heatmap: {
+                opacity: 0.7,
+                initialRadius: 20,
+                gradient: [
+                    'rgba(102, 187, 106, 0)',
+                    'rgba(255, 255, 0, 1)',
+                    'rgba(255, 191, 0, 1)',
+                    'rgba(255, 127, 0, 1)',
+                    'rgba(255, 63, 0, 1)',
+                    'rgba(255, 0, 0, 1)',
+                    'rgba(139, 0, 0, 1)'
+                ]
+            }
+        };
+
+        // Track dependencies loading
+        window.depsLoaded = {
+            turf: false,
+            googleMaps: false
+        };
+    </script>
+
+    <!-- Main application code -->
+    <script>
+        (function() {
+            'use strict';
+
+            const CACHE_KEY = 'odor_heatmap_data';
+            const CACHE_TIMESTAMP_KEY = 'odor_heatmap_timestamp';
+            const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
+
+            let map, heatmap;
+            let currentRadius = window.mapConfig.heatmap.initialRadius;
+            let isInitialLoad = true;
+            let retryTimeout = null;
+            let isUpdating = false;
+            let updateInterval = null;
+
+            function checkDependencies() {
+                return window.depsLoaded.turf && window.depsLoaded.googleMaps;
+            }
+
+            function updateStatus(elementId, message, type) {
+                const element = document.getElementById(elementId);
+                if (element) {
+                    element.textContent = message;
+                    element.className = `status-item status-${type}`;
+                    if (type === 'info') {
+                        element.classList.add('updating');
+                    } else {
+                        element.classList.remove('updating');
+                    }
                 }
             }
-        }
 
-        function updateProgressBar(visible, progress = 0) {
-            const progressElement = document.getElementById('loading-progress');
-            const progressBar = document.getElementById('progress-bar');
+            function updateProgressBar(visible, progress = 0) {
+                const progressElement = document.getElementById('loading-progress');
+                const progressBar = document.getElementById('progress-bar');
 
-            if (visible) {
-                progressElement.style.display = 'block';
-                progressBar.style.width = `${progress}%`;
-            } else {
-                // Fade out smoothly
-                progressBar.style.width = '100%';
-                setTimeout(() => {
-                    progressElement.style.display = 'none';
-                    progressBar.style.width = '0%';
-                }, 300);
+                if (visible) {
+                    progressElement.style.display = 'block';
+                    progressBar.style.width = `${progress}%`;
+                } else {
+                    // Fade out smoothly
+                    progressBar.style.width = '100%';
+                    setTimeout(() => {
+                        progressElement.style.display = 'none';
+                        progressBar.style.width = '0%';
+                    }, 300);
+                }
             }
-        }
 
-        function loadCachedData() {
-            try {
-                const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
-                if (cachedTimestamp) {
-                    const timestamp = parseInt(cachedTimestamp);
-                    const now = Date.now();
-                    const age = now - timestamp;
+            function loadCachedData() {
+                try {
+                    const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+                    if (cachedTimestamp) {
+                        const timestamp = parseInt(cachedTimestamp);
+                        const now = Date.now();
+                        const age = now - timestamp;
 
-                    if (age < CACHE_MAX_AGE) {
-                        const cachedData = localStorage.getItem(CACHE_KEY);
-                        if (cachedData) {
-                            return JSON.parse(cachedData);
+                        if (age < CACHE_MAX_AGE) {
+                            const cachedData = localStorage.getItem(CACHE_KEY);
+                            if (cachedData) {
+                                return JSON.parse(cachedData);
+                            }
                         }
                     }
+                } catch (error) {
+                    console.warn('Error loading cached data:', error);
                 }
-            } catch (error) {
-                console.warn('Error loading cached data:', error);
+                return null;
             }
-            return null;
-        }
 
-        function saveToCache(data) {
-            try {
-                localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-                localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-            } catch (error) {
-                console.warn('Error saving to cache:', error);
+            function saveToCache(data) {
+                try {
+                    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+                    localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+                } catch (error) {
+                    console.warn('Error saving to cache:', error);
+                }
             }
-        }
 
-        async function fetchData(retryCount = 0) {
-            if (isUpdating || !checkDependencies()) return;
+            async function fetchData(retryCount = 0) {
+                if (isUpdating || !checkDependencies()) return;
 
-            isUpdating = true;
-            updateProgressBar(true, 0);
+                isUpdating = true;
+                updateProgressBar(true, 0);
 
-            try {
-                updateStatus('data-status', 'Updating data...', 'info');
-                updateProgressBar(true, 30);
+                try {
+                    updateStatus('data-status', 'Updating data...', 'info');
+                    updateProgressBar(true, 30);
 
-                const response = await fetch(`${window.mapConfig.dataSource}?t=${Date.now()}`, {
-                    headers: {
-                        'Accept-Encoding': 'gzip',
-                        'Cache-Control': 'no-cache'
+                    const response = await fetch(`${window.mapConfig.dataSource}?t=${Date.now()}`, {
+                        headers: {
+                            'Accept-Encoding': 'gzip',
+                            'Cache-Control': 'no-cache'
+                        }
+                    });
+
+                    updateProgressBar(true, 60);
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
                     }
-                });
 
-                updateProgressBar(true, 60);
+                    const geoJsonData = await response.json();
+                    updateProgressBar(true, 90);
 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    saveToCache(geoJsonData);
+                    updateHeatmap(geoJsonData);
+
+                    updateStatus('data-status',
+                        `Last updated: ${new Date().toLocaleTimeString()}`,
+                        'success');
+                    updateProgressBar(false);
+
+                    isInitialLoad = false;
+                    isUpdating = false;
+
+                    if (retryTimeout) {
+                        clearTimeout(retryTimeout);
+                        retryTimeout = null;
+                    }
+
+                } catch (error) {
+                    console.error('Data fetch failed:', error);
+                    handleFetchError(error, retryCount);
                 }
+            }
 
-                const geoJsonData = await response.json();
-                updateProgressBar(true, 90);
-
-                saveToCache(geoJsonData);
-                updateHeatmap(geoJsonData);
-
-                updateStatus('data-status',
-                    `Last updated: ${new Date().toLocaleTimeString()}`,
-                    'success');
+            function handleFetchError(error, retryCount) {
                 updateProgressBar(false);
-
-                isInitialLoad = false;
                 isUpdating = false;
 
-                if (retryTimeout) {
-                    clearTimeout(retryTimeout);
-                    retryTimeout = null;
-                }
-
-            } catch (error) {
-                console.error('Data fetch failed:', error);
-                handleFetchError(error, retryCount);
-            }
-        }
-
-        function handleFetchError(error, retryCount) {
-            updateProgressBar(false);
-            isUpdating = false;
-
-            const cachedData = loadCachedData();
-            if (cachedData) {
-                updateHeatmap(cachedData);
-                updateStatus('data-status',
-                    'Failed to fetch new data, using cached data',
-                    'warning');
-            } else {
-                updateStatus('data-status',
-                    `Failed to load data. Retrying...`,
-                    'error');
-            }
-
-            const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
-            retryTimeout = setTimeout(() => fetchData(retryCount + 1), retryDelay);
-        }
-
-        function updateHeatmap(geoJsonData) {
-            const heatmapData = convertGeoJsonToHeatmapData(geoJsonData);
-
-            if (!map) {
-                initializeMap(window.mapConfig.map.defaultCenter);
-            }
-
-            if (heatmapData.length > 0) {
-                requestAnimationFrame(() => {
-                    heatmap.setData(heatmapData);
-                });
-            }
-        }
-
-        function initializeMap(center) {
-            const mapOptions = {
-                zoom: window.mapConfig.map.initialZoom,
-                center: center,
-                mapTypeId: 'roadmap',
-                styles: window.mapConfig.map.defaultStyles,
-                optimized: true,
-                backgroundColor: '#f8f8f8',
-                clickableIcons: false,
-                tilt: 0
-            };
-
-            map = new google.maps.Map(document.getElementById('map'), mapOptions);
-
-            heatmap = new google.maps.visualization.HeatmapLayer({
-                map,
-                radius: currentRadius,
-                opacity: window.mapConfig.heatmap.opacity,
-                gradient: window.mapConfig.heatmap.gradient,
-                maxIntensity: 5
-            });
-
-            let zoomTimeout;
-            map.addListener('zoom_changed', () => {
-                clearTimeout(zoomTimeout);
-                zoomTimeout = setTimeout(updateHeatmapRadius, 100);
-            });
-
-            updateHeatmapRadius();
-        }
-
-        function convertGeoJsonToHeatmapData(geoJson) {
-            if (!window.turf) {
-                console.error('Turf.js not loaded');
-                return [];
-            }
-
-            const heatmapPoints = [];
-            let maxIntensity = 0;
-
-            try {
-                window.turf.featureEach(geoJson, feature => {
-                    if (feature.geometry?.type === "Point") {
-                        const [lng, lat] = feature.geometry.coordinates;
-                        if (isValidCoordinate(lat, lng)) {
-                            const point = new google.maps.LatLng(lat, lng);
-                            const intensity = feature.properties?.intensity || 1;
-
-                            maxIntensity = Math.max(maxIntensity, intensity);
-                            heatmapPoints.push({
-                                location: point,
-                                weight: parseFloat(intensity)
-                            });
-                        }
-                    }
-                });
-
-                if (heatmap && maxIntensity > 0) {
-                    heatmap.set('maxIntensity', maxIntensity);
-                }
-
-                return heatmapPoints;
-            } catch (error) {
-                console.error('Error processing GeoJSON data:', error);
-                return [];
-            }
-        }
-
-        function isValidCoordinate(lat, lng) {
-            return !isNaN(lat) && !isNaN(lng) &&
-                Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
-        }
-
-        function updateHeatmapRadius() {
-            const zoom = map.getZoom();
-            currentRadius = calculateRadiusForZoom(zoom);
-            requestAnimationFrame(() => {
-                heatmap.set('radius', currentRadius);
-            });
-        }
-
-        function calculateRadiusForZoom(zoom) {
-            return Math.max(10, Math.pow(2, zoom - 5));
-        }
-
-        function startUpdateInterval() {
-            if (updateInterval) {
-                clearInterval(updateInterval);
-            }
-
-            let lastFetchTime = Date.now();
-            updateInterval = setInterval(() => {
-                const now = Date.now();
-                if (!isUpdating && (now - lastFetchTime >= window.mapConfig.refreshInterval)) {
-                    lastFetchTime = now;
-                    fetchData();
-                }
-            }, window.mapConfig.refreshInterval);
-        }
-
-        window.initializeMapWhenReady = function() {
-            if (!checkDependencies()) {
-                return;
-            }
-
-            try {
                 const cachedData = loadCachedData();
                 if (cachedData) {
                     updateHeatmap(cachedData);
+                    updateStatus('data-status',
+                        'Failed to fetch new data, using cached data',
+                        'warning');
+                } else {
+                    updateStatus('data-status',
+                        `Failed to load data. Retrying...`,
+                        'error');
                 }
 
-                fetchData();
-                startUpdateInterval();
-
-            } catch (error) {
-                console.error('Initialization error:', error);
-                updateStatus('data-status', 'Failed to initialize map. Please refresh the page.', 'error');
+                const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+                retryTimeout = setTimeout(() => fetchData(retryCount + 1), retryDelay);
             }
+
+            function updateHeatmap(geoJsonData) {
+                const heatmapData = convertGeoJsonToHeatmapData(geoJsonData);
+
+                if (!map) {
+                    initializeMap(window.mapConfig.map.defaultCenter);
+                }
+
+                if (heatmapData.length > 0) {
+                    requestAnimationFrame(() => {
+                        heatmap.setData(heatmapData);
+                    });
+                }
+            }
+
+            function initializeMap(center) {
+                const mapOptions = {
+                    zoom: window.mapConfig.map.initialZoom,
+                    center: center,
+                    mapTypeId: 'roadmap',
+                    styles: window.mapConfig.map.defaultStyles,
+                    optimized: true,
+                    backgroundColor: '#f8f8f8',
+                    clickableIcons: false,
+                    tilt: 0
+                };
+
+                map = new google.maps.Map(document.getElementById('map'), mapOptions);
+
+                // Add status panel to the map controls
+                const statusPanel = document.getElementById('status-panel');
+                map.controls[google.maps.ControlPosition.TOP_LEFT].push(statusPanel);
+
+                heatmap = new google.maps.visualization.HeatmapLayer({
+                    map,
+                    radius: currentRadius,
+                    opacity: window.mapConfig.heatmap.opacity,
+                    gradient: window.mapConfig.heatmap.gradient,
+                    maxIntensity: 5
+                });
+
+                let zoomTimeout;
+                map.addListener('zoom_changed', () => {
+                    clearTimeout(zoomTimeout);
+                    zoomTimeout = setTimeout(updateHeatmapRadius, 100);
+                });
+
+                updateHeatmapRadius();
+            }
+
+            function convertGeoJsonToHeatmapData(geoJson) {
+                if (!window.turf) {
+                    console.error('Turf.js not loaded');
+                    return [];
+                }
+
+                const heatmapPoints = [];
+                let maxIntensity = 0;
+
+                try {
+                    window.turf.featureEach(geoJson, feature => {
+                        if (feature.geometry?.type === "Point") {
+                            const [lng, lat] = feature.geometry.coordinates;
+                            if (isValidCoordinate(lat, lng)) {
+                                const point = new google.maps.LatLng(lat, lng);
+                                const intensity = feature.properties?.intensity || 1;
+
+                                maxIntensity = Math.max(maxIntensity, intensity);
+                                heatmapPoints.push({
+                                    location: point,
+                                    weight: parseFloat(intensity)
+                                });
+                            }
+                        }
+                    });
+
+                    if (heatmap && maxIntensity > 0) {
+                        heatmap.set('maxIntensity', maxIntensity);
+                    }
+
+                    return heatmapPoints;
+                } catch (error) {
+                    console.error('Error processing GeoJSON data:', error);
+                    return [];
+                }
+            }
+
+            function isValidCoordinate(lat, lng) {
+                return !isNaN(lat) && !isNaN(lng) &&
+                    Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+            }
+
+            function updateHeatmapRadius() {
+                const zoom = map.getZoom();
+                currentRadius = calculateRadiusForZoom(zoom);
+                requestAnimationFrame(() => {
+                    heatmap.set('radius', currentRadius);
+                });
+            }
+
+            function calculateRadiusForZoom(zoom) {
+                return Math.max(10, Math.pow(2, zoom - 5));
+            }
+
+            function startUpdateInterval() {
+                if (updateInterval) {
+                    clearInterval(updateInterval);
+                }
+
+                let lastFetchTime = Date.now();
+                updateInterval = setInterval(() => {
+                    const now = Date.now();
+                    if (!isUpdating && (now - lastFetchTime >= window.mapConfig.refreshInterval)) {
+                        lastFetchTime = now;
+                        fetchData();
+                    }
+                }, window.mapConfig.refreshInterval);
+            }
+
+            window.initializeMapWhenReady = function() {
+                if (!checkDependencies()) {
+                    return;
+                }
+
+                try {
+                    const cachedData = loadCachedData();
+                    if (cachedData) {
+                        updateHeatmap(cachedData);
+                    }
+
+                    fetchData();
+                    startUpdateInterval();
+
+                } catch (error) {
+                    console.error('Initialization error:', error);
+                    updateStatus('data-status', 'Failed to initialize map. Please refresh the page.', 'error');
+                }
+            };
+        })();
+    </script>
+
+    <!-- Load dependencies -->
+    <script>
+        // Function to load Google Maps
+        function loadGoogleMapsScript() {
+            const script = document.createElement('script');
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${window.ENV.GOOGLE_MAPS_API_KEY}&libraries=visualization&callback=googleMapsLoaded`;
+            script.async = true;
+            document.head.appendChild(script);
+        }
+
+        // Callback for Google Maps load
+        window.googleMapsLoaded = function() {
+            window.depsLoaded.googleMaps = true;
+            checkAllDependencies();
         };
-    })(); <
-/script>
 
-<
-!--Load dependencies-- >
-<
-script >
-    // Function to load Google Maps
-    function loadGoogleMapsScript() {
-        const script = document.createElement('script');
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${window.ENV.GOOGLE_MAPS_API_KEY}&libraries=visualization&callback=googleMapsLoaded`;
-        script.async = true;
-        document.head.appendChild(script);
-    }
+        // Callback for Turf.js load
+        window.turfLoaded = function() {
+            window.depsLoaded.turf = true;
+            loadGoogleMapsScript();
+        };
 
-// Callback for Google Maps load
-window.googleMapsLoaded = function() {
-    window.depsLoaded.googleMaps = true;
-    checkAllDependencies();
-};
+        // Check if all dependencies are loaded
+        function checkAllDependencies() {
+            if (window.depsLoaded.turf && window.depsLoaded.googleMaps) {
+                window.initializeMapWhenReady();
+            }
+        }
 
-// Callback for Turf.js load
-window.turfLoaded = function() {
-    window.depsLoaded.turf = true;
-    loadGoogleMapsScript();
-};
+        // Error handler for script loading
+        function handleScriptError(scriptName) {
+            updateStatus('data-status', `Failed to load ${scriptName}. Please refresh the page.`, 'error');
+        }
 
-// Check if all dependencies are loaded
-function checkAllDependencies() {
-    if (window.depsLoaded.turf && window.depsLoaded.googleMaps) {
-        window.initializeMapWhenReady();
-    }
-}
-
-// Error handler for script loading
-function handleScriptError(scriptName) {
-    updateStatus('data-status', `Failed to load ${scriptName}. Please refresh the page.`, 'error');
-}
-
-// Start loading dependencies
-document.addEventListener('DOMContentLoaded', function() {
-    // Load Turf.js first
-    const turfScript = document.createElement('script');
-    turfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js';
-    turfScript.onload = window.turfLoaded;
-    turfScript.onerror = () => handleScriptError('Turf.js');
-    document.head.appendChild(turfScript);
-}); <
-/script> <
-/body> <
-/html>
+        // Start loading dependencies
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load Turf.js first
+            const turfScript = document.createElement('script');
+            turfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js';
+            turfScript.onload = window.turfLoaded;
+            turfScript.onerror = () => handleScriptError('Turf.js');
+            document.head.appendChild(turfScript);
+        });
+    </script>
+</body>
+</html>
