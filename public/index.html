@@ -34,7 +34,17 @@
     <div id="map"></div>
     <div id="lastUpdate">Last updated: Never</div>
 
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCNRsP7-aX1VgxoayxNVhqRRe2Mor8SQv0&libraries=visualization"></script>
+    <!-- Load environment variables first -->
+    <script>
+        window.ENV = {
+            GOOGLE_MAPS_API_KEY: '%%GOOGLE_MAPS_API_KEY%%'
+        };
+    </script>
+    
+    <!-- Load Google Maps with dynamic API key -->
+    <script defer 
+        src="https://maps.googleapis.com/maps/api/js?key=%%GOOGLE_MAPS_API_KEY%%&libraries=visualization">
+    </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
     
     <script>
@@ -42,7 +52,7 @@
         'use strict';
 
         const Config = {
-            dataSource: 'https://web-production-0bd7a.up.railway.app/odor', // Updated to Railway endpoint
+            dataSource: 'https://web-production-0bd7a.up.railway.app/odor',
             refreshInterval: 60000, // 1 minute in milliseconds
             map: {
                 initialZoom: 13,
@@ -102,6 +112,8 @@
                 updateLastUpdateTime();
             } catch (error) {
                 console.error('Data fetch failed:', error);
+                document.getElementById('lastUpdate').textContent = 
+                    `Error: Failed to load data. Retrying...`;
             }
         }
 
