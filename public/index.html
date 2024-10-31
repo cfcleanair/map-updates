@@ -55,7 +55,8 @@
             dataSource: 'https://web-production-0bd7a.up.railway.app/odor',
             refreshInterval: 60000, // 1 minute in milliseconds
             map: {
-                initialZoom: 13,
+                initialZoom: 8, // Changed from 13 to 8 for wider view
+                defaultCenter: { lat: 31.4117257, lng: 35.0818155 }, // Israel's center coordinates
                 defaultStyles: [
                     {
                         featureType: "landscape",
@@ -135,8 +136,7 @@
             
             if (!map) {
                 // First time initialization
-                const center = calculateDataCenter(heatmapData);
-                initializeMap(center);
+                initializeMap(Config.map.defaultCenter); // Use default center instead of calculating
             }
             
             // Update existing heatmap data
@@ -149,7 +149,7 @@
         function initializeMap(center) {
             map = new google.maps.Map(document.getElementById('map'), {
                 zoom: Config.map.initialZoom,
-                center,
+                center: center,
                 mapTypeId: 'roadmap',
                 styles: Config.map.defaultStyles
             });
