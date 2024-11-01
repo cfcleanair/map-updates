@@ -1,29 +1,187 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Odor Nuisance Heatmap</title>
-    <link rel="preconnect" href="https://maps.googleapis.com">
-    <link rel="preconnect" href="https://maps.gstatic.com">
-    <link rel="preconnect" href="https://web-production-0bd7a.up.railway.app">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Odor Nuisance Heatmap</title>
+        <link rel="preconnect" href="https://maps.googleapis.com">
+        <link rel="preconnect" href="https://maps.gstatic.com">
+        <link rel="preconnect" href="https://web-production-0bd7a.up.railway.app">
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+        
+        <style>
+            body, html {
+                height: 100%;
+                margin: 0;
+                padding: 0;
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }
     
-    <style>
-        body, html {
-            height: 100%;
-            margin: 0;
-            padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-        }
-
-        #map {
-            height: 100%;
-            width: 100%;
-            background: #f8f8f8;
-        }
-    </style>
-</head>
+            #map {
+                height: 100%;
+                width: 100%;
+                background: #f8f8f8;
+                opacity: 0;
+                transition: opacity 0.5s ease-in-out;
+            }
+    
+            #map.loaded {
+                opacity: 1;
+            }
+    
+            /* Enhanced Loading Screen Styles */
+            .loading-screen {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                z-index: 1000;
+                transition: opacity 0.5s ease-in-out;
+            }
+    
+            .loading-screen.hidden {
+                opacity: 0;
+                pointer-events: none;
+            }
+    
+            .loading-container {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 25px;
+            }
+    
+            .spinner-container {
+                position: relative;
+                width: 60px;
+                height: 60px;
+            }
+    
+            .spinner {
+                position: absolute;
+                width: 100%;
+                height: 100%;
+                border: 3px solid transparent;
+                border-top-color: #3b82f6;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+            }
+    
+            .spinner-inner {
+                position: absolute;
+                width: 70%;
+                height: 70%;
+                left: 15%;
+                top: 15%;
+                border: 3px solid transparent;
+                border-top-color: #60a5fa;
+                border-radius: 50%;
+                animation: spin 0.75s linear infinite reverse;
+            }
+    
+            .pulse {
+                position: absolute;
+                width: 100%;
+                height: 100%;
+                border-radius: 50%;
+                background: rgba(59, 130, 246, 0.1);
+                animation: pulse 2s ease-out infinite;
+            }
+    
+            .loading-text {
+                color: #1f2937;
+                font-size: 16px;
+                font-weight: 500;
+                letter-spacing: 0.01em;
+                margin-top: 10px;
+                text-align: center;
+            }
+    
+            .loading-subtext {
+                color: #6b7280;
+                font-size: 14px;
+                font-weight: 400;
+                margin-top: 8px;
+                text-align: center;
+            }
+    
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+    
+            @keyframes pulse {
+                0% {
+                    transform: scale(0.95);
+                    opacity: 0.5;
+                }
+                50% {
+                    transform: scale(1);
+                    opacity: 0.3;
+                }
+                100% {
+                    transform: scale(1.05);
+                    opacity: 0;
+                }
+            }
+    
+            .loading-progress {
+                width: 150px;
+                height: 3px;
+                background: #e5e7eb;
+                border-radius: 2px;
+                overflow: hidden;
+                margin-top: 15px;
+            }
+    
+            .progress-bar {
+                height: 100%;
+                width: 30%;
+                background: #3b82f6;
+                border-radius: 2px;
+                animation: progress 2s ease-in-out infinite;
+            }
+    
+            @keyframes progress {
+                0% {
+                    width: 0%;
+                    transform: translateX(-100%);
+                }
+                50% {
+                    width: 30%;
+                }
+                100% {
+                    width: 0%;
+                    transform: translateX(500%);
+                }
+            }
+        </style>
+    </head>
 <body>
+    <!-- Enhanced Loading Screen -->
+    <div id="loadingScreen" class="loading-screen">
+        <div class="loading-container">
+            <div class="spinner-container">
+                <div class="pulse"></div>
+                <div class="spinner"></div>
+                <div class="spinner-inner"></div>
+            </div>
+            <div>
+                <div class="loading-text">Loading Heatmap Data</div>
+                <div class="loading-subtext">Please wait while we prepare the map</div>
+            </div>
+            <div class="loading-progress">
+                <div class="progress-bar"></div>
+            </div>
+        </div>
+    </div>
     <div id="map"></div>
 
     <!-- Initial configuration -->
@@ -272,7 +430,8 @@
             }
 
             function calculateRadiusForZoom(zoom) {
-                return Math.max(10, Math.pow(2, zoom - 5));
+                if (zoom < 9) return 12;
+                return Math.pow(2, zoom-5);
             }
 
             function startUpdateInterval() {
