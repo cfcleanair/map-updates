@@ -266,7 +266,7 @@
                 loadingScreen.classList.add('hidden');
                 mapElement.classList.add('loaded');
                 
-                // Remove loading screen after animation
+                
                 setTimeout(() => {
                     loadingScreen.style.display = 'none';
                 }, 500);
@@ -325,7 +325,7 @@
 
                     saveToCache(geoJsonData);
                     updateHeatmap(geoJsonData);
-                    hideLoadingScreen();  // Added this line
+                    hideLoadingScreen(); 
 
                     if (retryTimeout) {
                         clearTimeout(retryTimeout);
@@ -342,7 +342,7 @@
                 const cachedData = loadCachedData();
                 if (cachedData) {
                     updateHeatmap(cachedData);
-                    hideLoadingScreen();  // Added this line
+                    hideLoadingScreen();  
                 }
 
                 const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
@@ -438,15 +438,21 @@
 
             function updateHeatmapRadius() {
                 const zoom = map.getZoom();
-                currentRadius = calculateRadiusForZoom(zoom);
-                requestAnimationFrame(() => {
-                    heatmap.set('radius', currentRadius);
-                });
+                const newRadius = calculateRadiusForZoom(zoom);
+                
+                // Only update if the radius has actually changed
+                if (currentRadius !== newRadius) {
+                    currentRadius = newRadius;
+                    requestAnimationFrame(() => {
+                        heatmap.set('radius', currentRadius);
+                    });
+                }
             }
 
             function calculateRadiusForZoom(zoom) {
-                if (zoom < 9) return 12;
-                return Math.pow(2, zoom-5);
+                const baseRadius = 70; // Starting radius
+                const scaleFactor = 3;  // How quickly radius decreases with zoom
+                return Math.max(8, baseRadius - (zoom * scaleFactor));
             }
 
             function startUpdateInterval() {
