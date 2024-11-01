@@ -259,6 +259,19 @@
             let retryTimeout = null;
             let updateInterval = null;
 
+            function hideLoadingScreen() {
+                const loadingScreen = document.getElementById('loadingScreen');
+                const mapElement = document.getElementById('map');
+                
+                loadingScreen.classList.add('hidden');
+                mapElement.classList.add('loaded');
+                
+                // Remove loading screen after animation
+                setTimeout(() => {
+                    loadingScreen.style.display = 'none';
+                }, 500);
+            }
+
             function checkDependencies() {
                 return window.depsLoaded.turf && window.depsLoaded.googleMaps;
             }
@@ -312,6 +325,7 @@
 
                     saveToCache(geoJsonData);
                     updateHeatmap(geoJsonData);
+                    hideLoadingScreen();  // Added this line
 
                     if (retryTimeout) {
                         clearTimeout(retryTimeout);
@@ -328,6 +342,7 @@
                 const cachedData = loadCachedData();
                 if (cachedData) {
                     updateHeatmap(cachedData);
+                    hideLoadingScreen();  // Added this line
                 }
 
                 const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
