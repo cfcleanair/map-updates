@@ -225,6 +225,8 @@ def update_data():
         print("Processing intensity values...")
         odor_nuisance_df['עוצמת הריח'] = pd.to_numeric(odor_nuisance_df['עוצמת הריח'], errors='coerce').fillna(0)
         odor_nuisance_df['intensity'] = odor_nuisance_df.apply(calculate_intensity, axis=1)
+        odor_nuisance_df = odor_nuisance_df[odor_nuisance_df['intensity'] > 0]
+        print(f"After intensity filtering: {len(odor_nuisance_df)} odor reports")
         
         # Randomize coordinates
         print("Randomizing coordinates...")
@@ -232,11 +234,18 @@ def update_data():
         
         # Create GeoDataFrames
         print("Creating GeoDataFrames...")
-        odor_gdf = gpd.GeoDataFrame(
-            odor_nuisance_df,
-            geometry=gpd.points_from_xy(odor_nuisance_df['lon'], odor_nuisance_df['lat']),
-            crs='EPSG:4326'
-        )
+        if len(odor_nuisance_df) > 0:
+            odor_gdf = gpd.GeoDataFrame(
+                odor_nuisance_df,
+                geometry=gpd.points_from_xy(odor_nuisance_df['lon'], odor_nuisance_df['lat']),
+                crs='EPSG:4326'
+            )
+        else:
+            # Create empty GeoDataFrame with the same structure
+            odor_gdf = gpd.GeoDataFrame(
+                columns=odor_nuisance_df.columns.tolist() + ['geometry'],
+                crs='EPSG:4326'
+            )
         waste_gdf = gpd.GeoDataFrame(
             waste_nuisance_df,
             geometry=gpd.points_from_xy(waste_nuisance_df['lon'], waste_nuisance_df['lat']),
