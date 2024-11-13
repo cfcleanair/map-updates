@@ -181,13 +181,19 @@ def update_data():
         # Process datetime
         print("Processing datetime...")
         df_original['datetime'] = pd.to_datetime(
-            df_original['תאריך שליחת הדיווח'].astype(str) + ' ' + df_original['שעת שליחת הדיווח'].astype(str),
-            format='%d/%m/%Y %H:%M:%S',
-            errors='coerce'
+        df_original['תאריך שליחת הדיווח'].astype(str) + ' ' + df_original['שעת שליחת הדיווח'].astype(str),
+        format='%d/%m/%Y %H:%M:%S',
+        errors='coerce'
         )
-        
+
+        # Get current time
         current_time = datetime.now()
-        df_original['datetime'] = current_time  # Set all events to current time
+
+        # Randomly select 50 indices
+        random_indices = np.random.choice(df_original.index, size=50, replace=False)
+
+        # Update only those 50 rows with current time
+        df_original.loc[random_indices, 'datetime'] = current_time
         # Calculate time elapsed
         df_original['time_elapsed_minutes'] = (current_time - df_original['datetime']).dt.total_seconds() / 60
         df_original['time_elapsed_minutes'] = df_original['time_elapsed_minutes'].clip(lower=0, upper=10000)
