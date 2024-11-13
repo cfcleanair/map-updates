@@ -186,8 +186,9 @@ def update_data():
             errors='coerce'
         )
         
+        current_time = datetime.now()
+        df_original['datetime'] = current_time  # Set all events to current time
         # Calculate time elapsed
-        current_time = pd.Timestamp.now()
         df_original['time_elapsed_minutes'] = (current_time - df_original['datetime']).dt.total_seconds() / 60
         df_original['time_elapsed_minutes'] = df_original['time_elapsed_minutes'].clip(lower=0, upper=10000)
         
