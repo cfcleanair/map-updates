@@ -450,10 +450,9 @@
             }
 
             function calculateRadiusForZoom(zoom) {
-                if (zoom < 9) {
-                    return 12;
-                }
-                return Math.pow(2, zoom-5);
+                const baseRadius = 70; // Starting radius
+                const scaleFactor = 3;  // How quickly radius decreases with zoom
+                return Math.max(8, baseRadius - (zoom * scaleFactor));
             }
 
             function startUpdateInterval() {
