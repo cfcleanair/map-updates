@@ -450,10 +450,23 @@
             }
 
             function calculateRadiusForZoom(zoom) {
-                const baseRadius = -128;
-                const scaleFactor = 16;
-                return Math.max(8, baseRadius + (zoom * scaleFactor));
+                let radius;
+                if (zoom >= 1 && zoom <= 8) {
+                    radius = 12;
+                } else if (zoom === 9) {
+                    radius = 16;
+                } else if (zoom === 10) {
+                    radius = 32;
+                } else if (zoom === 11) {
+                    radius = 64;
+                } else if (zoom >= 12) {
+                    radius = 128;
+                } else {
+                    radius = 12;
+                }
+                return radius;
             }
+            
 
             function startUpdateInterval() {
                 if (updateInterval) {
