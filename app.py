@@ -28,20 +28,7 @@ latest_odor_geojson = None
 last_update_time = None
 
 class CustomJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder for handling datetime-related objects.
-    
-    Parameters:
-        json.JSONEncoder: Base JSON encoder class
-    """
     def default(self, obj: Any) -> str:
-        """Convert datetime-related objects to ISO format strings.
-        
-        Parameters:
-            obj: Object to encode
-            
-        Returns:
-            str: ISO formatted string for datetime objects
-        """
         if isinstance(obj, (datetime, time)):
             return obj.isoformat()
         elif isinstance(obj, timedelta):
@@ -49,14 +36,6 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 def gzip_response(data: Dict[str, Any]) -> Response:
-    """Compress JSON data and create a gzipped HTTP response.
-    
-    Parameters:
-        data: Dictionary to be JSON encoded and compressed
-        
-    Returns:
-        Response: Flask response object with gzipped content
-    """
     gzip_buffer = gzip.compress(json.dumps(data, cls=CustomJSONEncoder).encode('utf-8'))
     return Response(
         gzip_buffer,
@@ -70,14 +49,6 @@ def gzip_response(data: Dict[str, Any]) -> Response:
     )
 
 def get_google_credentials() -> service_account.Credentials:
-    """Retrieve Google service account credentials from environment.
-    
-    Returns:
-        service_account.Credentials: Google service account credentials
-        
-    Raises:
-        ValueError: If GOOGLE_CREDENTIALS environment variable is not set
-    """
     credentials_json = os.getenv('GOOGLE_CREDENTIALS')
     if not credentials_json:
         raise ValueError("GOOGLE_CREDENTIALS environment variable not set")
@@ -89,27 +60,11 @@ def get_google_credentials() -> service_account.Credentials:
     )
 
 def calculate_decay_rate(initial_intensity: float) -> float:
-    """Calculate decay rate for odor intensity.
-    
-    Parameters:
-        initial_intensity: Initial odor intensity value
-        
-    Returns:
-        float: Calculated decay rate
-    """
     if initial_intensity == 0:
         return 0
     return initial_intensity / 100
 
 def calculate_intensity(row: pd.Series) -> float:
-    """Calculate current intensity based on initial value and elapsed time.
-    
-    Parameters:
-        row: DataFrame row containing intensity and time data
-        
-    Returns:
-        float: Current calculated intensity
-    """
     initial_intensity = row['עוצמת הריח']
     time_elapsed = row['time_elapsed_minutes']
     decay_rate = calculate_decay_rate(initial_intensity)
@@ -117,32 +72,19 @@ def calculate_intensity(row: pd.Series) -> float:
     return round(current_intensity, 2)
 
 def split_coordinates(df: pd.DataFrame) -> pd.DataFrame:
-    """Split coordinate string into separate latitude and longitude columns.
+    df = df[df['קואורדינטות'].str.match(r'^-?\d+\.?\d*,-?\d+\.?\d*$', na=False)]
     
-    Parameters:
-        df: DataFrame containing coordinates column
-        
-    Returns:
-        pd.DataFrame: DataFrame with added lat and lon columns
-    """
     coords_split = df['קואורדינטות'].str.split(',', expand=True)
     if coords_split.shape[1] >= 2:
-        df['lat'] = coords_split[0].astype(float)
-        df['lon'] = coords_split[1].astype(float)
+        df['lat'] = pd.to_numeric(coords_split[0], errors='coerce')
+        df['lon'] = pd.to_numeric(coords_split[1], errors='coerce')
     else:
         df['lat'] = np.nan
         df['lon'] = np.nan
-    return df
+    
+    return df[df['lat'].notna() & df['lon'].notna()]
 
 def randomize_coordinates(df: pd.DataFrame) -> pd.DataFrame:
-    """Randomize report locations within 0-300m radius for privacy.
-    
-    Parameters:
-        df: DataFrame containing lat and lon columns
-        
-    Returns:
-        pd.DataFrame: DataFrame with randomized coordinates
-    """
     earth_radius = 6378137
     max_distance = 300
 
@@ -169,14 +111,6 @@ def randomize_coordinates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def create_geojson_no_buffer(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
-    """Convert GeoDataFrame to GeoJSON format.
-    
-    Parameters:
-        gdf: GeoDataFrame to convert
-        
-    Returns:
-        Dict[str, Any]: GeoJSON feature collection
-    """
     gdf = gdf.replace({np.nan: None})
     features: List[Dict[str, Any]] = []
     for _, row in gdf.iterrows():
@@ -196,7 +130,6 @@ def create_geojson_no_buffer(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
     }
 
 def update_data() -> None:
-    """Update GeoJSON data from Google Sheets source."""
     global latest_odor_geojson, last_update_time
     
     try:
@@ -294,11 +227,6 @@ def update_data() -> None:
 
 @app.route('/')
 def home() -> Dict[str, Any]:
-    """Serve home page with basic status information.
-    
-    Returns:
-        Dict[str, Any]: Status information dictionary
-    """
     return jsonify({
         "status": "running",
         "last_update": last_update_time.isoformat() if last_update_time else None,
@@ -311,11 +239,6 @@ def home() -> Dict[str, Any]:
 @app.route('/odor')
 @cache.cached(timeout=60, key_prefix='odor_data')
 def serve_odor_geojson() -> Union[Response, tuple]:
-    """Serve the latest odor nuisance GeoJSON data.
-    
-    Returns:
-        Union[Response, tuple]: GeoJSON response or error tuple
-    """
     if latest_odor_geojson is None:
         return jsonify({"error": "No data available"}), 503
     
@@ -323,11 +246,6 @@ def serve_odor_geojson() -> Union[Response, tuple]:
 
 @app.route('/status')
 def server_status() -> Dict[str, Any]:
-    """Serve server status information.
-    
-    Returns:
-        Dict[str, Any]: Server status dictionary
-    """
     return jsonify({
         "status": "running",
         "last_update": last_update_time.isoformat() if last_update_time else None,
@@ -335,13 +253,11 @@ def server_status() -> Dict[str, Any]:
     })
 
 def run_schedule() -> None:
-    """Run the scheduler in a separate thread."""
     while True:
         schedule.run_pending()
         time_module.sleep(1)
 
 def initialize_app() -> None:
-    """Initialize the application with data and start scheduler."""
     try:
         update_data()
         schedule.every(1).minutes.do(update_data)
