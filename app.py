@@ -27,7 +27,6 @@ cache = Cache(app, config={
 latest_odor_geojson = None
 last_update_time = None
 
-# Define required columns as a constant at the top level
 REQUIRED_COLUMNS = [
     'תאריך שליחת הדיווח',
     'שעת שליחת הדיווח',
@@ -72,46 +71,32 @@ def get_google_credentials() -> service_account.Credentials:
     )
 
 def process_raw_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Initial processing of the raw dataframe to filter columns and invalid rows.
-    """
-    # Check for required columns
     missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     if missing_columns:
         raise ValueError(f"Missing columns: {missing_columns}")
     
-    # Select only required columns immediately
     df = df[REQUIRED_COLUMNS].copy()
+    df = df[(df['בדיקה'].fillna(0) != 1) & (df['ספאם'].fillna(0) != 1)]
+    df = df[df['קואורדינטות'].notna() & ~df['קואורדינטות'].astype(str).str.contains('המיקום לא נמצא', na=False)]
     
-    # Filter out test and spam rows
-    df = df[
-        (df['בדיקה'].fillna(0) != 1) & 
-        (df['ספאם'].fillna(0) != 1)
-    ]
-    
-    # Filter out rows with invalid coordinates
-    df = df[
-        df['קואורדינטות'].notna() & 
-        ~df['קואורדינטות'].astype(str).str.contains('המיקום לא נמצא', na=False)
-    ]
-    
-    # Add datetime column
     df['datetime'] = pd.to_datetime(
         df['תאריך שליחת הדיווח'].astype(str) + ' ' + df['שעת שליחת הדיווח'].astype(str),
         format='%d/%m/%Y %H:%M:%S',
         errors='coerce'
     )
     
+    current_time = datetime.now()
+    df['time_elapsed_minutes'] = (current_time - df['datetime']).dt.total_seconds() / 60
+    df['time_elapsed_minutes'] = df['time_elapsed_minutes'].clip(lower=0)
+    
     return df
 
 def calculate_decay_rate(initial_intensity: float) -> float:
-    if initial_intensity == 0:
-        return 0
-    return initial_intensity / 100
+    return initial_intensity / 100 if initial_intensity != 0 else 0
 
 def calculate_intensity(row: pd.Series) -> float:
-    initial_intensity = row['עוצמת הריח']
-    time_elapsed = row['time_elapsed_minutes']
+    initial_intensity = float(row['עוצמת הריח'])
+    time_elapsed = float(row['time_elapsed_minutes'])
     decay_rate = calculate_decay_rate(initial_intensity)
     current_intensity = max(0, initial_intensity - (decay_rate * time_elapsed))
     return round(current_intensity, 2)
@@ -158,6 +143,7 @@ def randomize_coordinates(df: pd.DataFrame) -> pd.DataFrame:
 def create_geojson_no_buffer(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
     gdf = gdf.replace({np.nan: None})
     features: List[Dict[str, Any]] = []
+    
     for _, row in gdf.iterrows():
         geom = row['geometry']
         props = row.drop('geometry').to_dict()
@@ -185,14 +171,8 @@ def update_data() -> None:
         spreadsheet = gc.open_by_url(sheet_url)
         worksheet = spreadsheet.worksheet('Sheet1')
         
-        # Get raw dataframe and immediately process it
         df_original = process_raw_dataframe(get_as_dataframe(worksheet))
         
-        current_time = datetime.now()
-        df_original['time_elapsed_minutes'] = (current_time - df_original['datetime']).dt.total_seconds() / 60
-        df_original['time_elapsed_minutes'] = df_original['time_elapsed_minutes'].clip(lower=0)
-
-        # Split into odor and waste dataframes
         odor_df = df_original[df_original['סוג דיווח'] == 'מפגע ריח'].copy()
         waste_df = df_original[df_original['סוג דיווח'] == 'מפגע פסולת'].copy()
         
