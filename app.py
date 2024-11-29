@@ -27,6 +27,18 @@ cache = Cache(app, config={
 latest_odor_geojson = None
 last_update_time = None
 
+# Define required columns as a constant at the top level
+REQUIRED_COLUMNS = [
+    'תאריך שליחת הדיווח',
+    'שעת שליחת הדיווח',
+    'סוג דיווח',
+    'קואורדינטות',
+    'עוצמת הריח',
+    'צבע העשן',
+    'בדיקה',
+    'ספאם'
+]
+
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj: Any) -> str:
         if isinstance(obj, (datetime, time)):
@@ -58,6 +70,39 @@ def get_google_credentials() -> service_account.Credentials:
         credentials_info,
         scopes=['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     )
+
+def process_raw_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Initial processing of the raw dataframe to filter columns and invalid rows.
+    """
+    # Check for required columns
+    missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+    if missing_columns:
+        raise ValueError(f"Missing columns: {missing_columns}")
+    
+    # Select only required columns immediately
+    df = df[REQUIRED_COLUMNS].copy()
+    
+    # Filter out test and spam rows
+    df = df[
+        (df['בדיקה'].fillna(0) != 1) & 
+        (df['ספאם'].fillna(0) != 1)
+    ]
+    
+    # Filter out rows with invalid coordinates
+    df = df[
+        df['קואורדינטות'].notna() & 
+        ~df['קואורדינטות'].astype(str).str.contains('המיקום לא נמצא', na=False)
+    ]
+    
+    # Add datetime column
+    df['datetime'] = pd.to_datetime(
+        df['תאריך שליחת הדיווח'].astype(str) + ' ' + df['שעת שליחת הדיווח'].astype(str),
+        format='%d/%m/%Y %H:%M:%S',
+        errors='coerce'
+    )
+    
+    return df
 
 def calculate_decay_rate(initial_intensity: float) -> float:
     if initial_intensity == 0:
@@ -140,43 +185,14 @@ def update_data() -> None:
         spreadsheet = gc.open_by_url(sheet_url)
         worksheet = spreadsheet.worksheet('Sheet1')
         
-        df_original = get_as_dataframe(worksheet)
+        # Get raw dataframe and immediately process it
+        df_original = process_raw_dataframe(get_as_dataframe(worksheet))
         
-        required_columns = [
-            'תאריך שליחת הדיווח',
-            'שעת שליחת הדיווח',
-            'סוג דיווח',
-            'קואורדינטות',
-            'עוצמת הריח',
-            'צבע העשן',
-            'בדיקה',
-            'ספאם'
-        ]
-        
-        missing_columns = [col for col in required_columns if col not in df_original.columns]
-        if missing_columns:
-            raise ValueError(f"Missing columns: {missing_columns}")
-        
-        df_original = df_original[
-            (df_original['בדיקה'].fillna(0) != 1) & 
-            (df_original['ספאם'].fillna(0) != 1)
-        ]
-        
-        df_original = df_original[
-            df_original['קואורדינטות'].notna() & 
-            ~df_original['קואורדינטות'].astype(str).str.contains('המיקום לא נמצא', na=False)
-        ]
-        
-        df_original['datetime'] = pd.to_datetime(
-            df_original['תאריך שליחת הדיווח'].astype(str) + ' ' + df_original['שעת שליחת הדיווח'].astype(str),
-            format='%d/%m/%Y %H:%M:%S',
-            errors='coerce'
-        )
-
         current_time = datetime.now()
         df_original['time_elapsed_minutes'] = (current_time - df_original['datetime']).dt.total_seconds() / 60
         df_original['time_elapsed_minutes'] = df_original['time_elapsed_minutes'].clip(lower=0)
 
+        # Split into odor and waste dataframes
         odor_df = df_original[df_original['סוג דיווח'] == 'מפגע ריח'].copy()
         waste_df = df_original[df_original['סוג דיווח'] == 'מפגע פסולת'].copy()
         
