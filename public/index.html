@@ -266,6 +266,7 @@
                 loadingScreen.classList.add('hidden');
                 mapElement.classList.add('loaded');
                 
+                
                 setTimeout(() => {
                     loadingScreen.style.display = 'none';
                 }, 500);
@@ -439,6 +440,7 @@
                 const zoom = map.getZoom();
                 const newRadius = calculateRadiusForZoom(zoom);
                 
+                // Only update if the radius has actually changed
                 if (currentRadius !== newRadius) {
                     currentRadius = newRadius;
                     requestAnimationFrame(() => {
@@ -464,6 +466,7 @@
                 }
                 return radius;
             }
+            
 
             function startUpdateInterval() {
                 if (updateInterval) {
@@ -480,8 +483,7 @@
                 }, window.mapConfig.refreshInterval);
             }
 
-            // Modified initialization function
-            window.initMap = function() {
+            window.initializeMapWhenReady = function() {
                 if (!checkDependencies()) {
                     return;
                 }
@@ -499,61 +501,52 @@
                     console.error('Initialization error:', error);
                 }
             };
-
-            // Export necessary functions to window for external access
-            window.mapHandlers = {
-                initMap: window.initMap,
-                checkDependencies: checkDependencies
-            };
         })();
     </script>
 
-    <!-- Load dependencies with proper async loading -->
+    <!-- Load dependencies -->
     <script>
-        // Load scripts in sequence with proper async handling
-        function loadScripts() {
-            // Load Turf.js
-            const turfScript = document.createElement('script');
-            turfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js';
-            turfScript.defer = true;
-            
-            turfScript.onload = () => {
-                window.depsLoaded.turf = true;
-                loadGoogleMapsScript();
-            };
-            
-            turfScript.onerror = () => {
-                console.error('Failed to load Turf.js. Please refresh the page.');
-            };
-            
-            document.head.appendChild(turfScript);
-        }
-
-        // Load Google Maps with proper async pattern
+        // Function to load Google Maps
         function loadGoogleMapsScript() {
             const script = document.createElement('script');
-            const callback = 'initMap'; // Changed callback name
-            script.src = `https://maps.googleapis.com/maps/api/js?key=${window.ENV.GOOGLE_MAPS_API_KEY}&libraries=visualization&callback=${callback}`;
-            script.defer = true;
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${window.ENV.GOOGLE_MAPS_API_KEY}&libraries=visualization&callback=googleMapsLoaded`;
             script.async = true;
-            
-            script.onload = () => {
-                window.depsLoaded.googleMaps = true;
-            };
-            
-            script.onerror = () => {
-                console.error('Failed to load Google Maps API. Please refresh the page.');
-            };
-            
             document.head.appendChild(script);
         }
 
-        // Start loading process when DOM is ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', loadScripts);
-        } else {
-            loadScripts();
+        // Callback for Google Maps load
+        window.googleMapsLoaded = function() {
+            window.depsLoaded.googleMaps = true;
+            checkAllDependencies();
+        };
+
+        // Callback for Turf.js load
+        window.turfLoaded = function() {
+            window.depsLoaded.turf = true;
+            loadGoogleMapsScript();
+        };
+
+        // Check if all dependencies are loaded
+        function checkAllDependencies() {
+            if (window.depsLoaded.turf && window.depsLoaded.googleMaps) {
+                window.initializeMapWhenReady();
+            }
         }
+
+        // Error handler for script loading
+        function handleScriptError(scriptName) {
+            console.error(`Failed to load ${scriptName}. Please refresh the page.`);
+        }
+
+        // Start loading dependencies
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load Turf.js first
+            const turfScript = document.createElement('script');
+            turfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js';
+            turfScript.onload = window.turfLoaded;
+            turfScript.onerror = () => handleScriptError('Turf.js');
+            document.head.appendChild(turfScript);
+        });
     </script>
 </body>
 </html>
