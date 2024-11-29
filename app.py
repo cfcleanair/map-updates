@@ -194,13 +194,13 @@ def update_data() -> None:
         
         odor_df['עוצמת הריח'] = pd.to_numeric(odor_df['עוצמת הריח'], errors='coerce').fillna(0)
         odor_df['intensity'] = odor_df.apply(calculate_intensity, axis=1)
-        odor_df = odor_df[odor_df['intensity'] > 0]
         
         valid_waste_df['intensity'] = valid_waste_df.apply(calculate_intensity, axis=1)
         
         odor_df = randomize_coordinates(odor_df)
         
         combined_df = pd.concat([odor_df, valid_waste_df])
+        combined_df = combined_df[combined_df['intensity'] > 0]
         
         if len(combined_df) > 0:
             combined_gdf = gpd.GeoDataFrame(
