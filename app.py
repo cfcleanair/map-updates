@@ -127,8 +127,15 @@ def process_raw_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         errors='coerce'
     )
     
-    df['datetime'] = df['datetime'].dt.tz_localize('Asia/Jerusalem')
-    current_time = datetime.now(timezone.utc).astimezone(tz.gettz('Asia/Jerusalem'))
+    try:
+        # Always use 'earliest' for ambiguous times during DST transitions
+        df['datetime'] = df['datetime'].dt.tz_localize('Asia/Jerusalem', ambiguous='earliest', nonexistent='shift_forward')
+    except Exception as e:
+        print(f"Warning: Time localization error: {str(e)}")
+        df = df[df['datetime'].notna()]
+    
+    israel_tz = tz.gettz('Asia/Jerusalem')
+    current_time = datetime.now(timezone.utc).astimezone(israel_tz)
     
     df['time_elapsed_minutes'] = (current_time - df['datetime']).dt.total_seconds() / 60
     df['time_elapsed_minutes'] = df['time_elapsed_minutes'].clip(lower=0)
