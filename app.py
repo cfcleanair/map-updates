@@ -101,46 +101,48 @@ def get_google_credentials() -> service_account.Credentials:
     )
 
 def process_raw_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Process and clean the raw dataframe from Google Sheets.
-    
-    Parameters:
-        df: Raw DataFrame containing odor reports
-        
-    Returns:
-        Cleaned DataFrame with processed datetime and elapsed time calculations
-        
-    Raises:
-        ValueError: If required columns are missing
-    """
-    missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
-    if missing_columns:
-        raise ValueError(f"Missing columns: {missing_columns}")
-    
-    df = df[REQUIRED_COLUMNS].copy()
-    df = df[(df['בדיקה'].fillna(0) != 1) & (df['ספאם'].fillna(0) != 1)]
-    df = df[df['קואורדינטות'].notna() & ~df['קואורדינטות'].astype(str).str.contains('המיקום לא נמצא', na=False)]
-    
-    df['datetime'] = pd.to_datetime(
-        df['תאריך שליחת הדיווח'].astype(str) + ' ' + df['שעת שליחת הדיווח'].astype(str),
-        format='%d/%m/%Y %H:%M:%S',
-        errors='coerce'
-    )
-    
-    try:
-        # Always use 'earliest' for ambiguous times during DST transitions
-        df['datetime'] = df['datetime'].dt.tz_localize('Asia/Jerusalem', ambiguous='earliest', nonexistent='shift_forward')
-    except Exception as e:
-        print(f"Warning: Time localization error: {str(e)}")
-        df = df[df['datetime'].notna()]
-    
-    israel_tz = tz.gettz('Asia/Jerusalem')
-    current_time = datetime.now(timezone.utc).astimezone(israel_tz)
-    
-    df['time_elapsed_minutes'] = (current_time - df['datetime']).dt.total_seconds() / 60
-    df['time_elapsed_minutes'] = df['time_elapsed_minutes'].clip(lower=0)
-    
-    return df
+   """
+   Process and clean the raw dataframe from Google Sheets.
+   
+   Parameters:
+       df: Raw DataFrame containing odor reports
+       
+   Returns:
+       Cleaned DataFrame with processed datetime and elapsed time calculations
+       
+   Raises:
+       ValueError: If required columns are missing
+   """
+   missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+   if missing_columns:
+       raise ValueError(f"Missing columns: {missing_columns}")
+   
+   df = df[REQUIRED_COLUMNS].copy()
+   df = df[(df['בדיקה'].fillna(0) != 1) & (df['ספאם'].fillna(0) != 1)]
+   df = df[df['קואורדינטות'].notna() & ~df['קואורדינטות'].astype(str).str.contains('המיקום לא נמצא', na=False)]
+   
+   israel_tz = tz.gettz('Asia/Jerusalem')
+   df['datetime'] = pd.to_datetime(
+       df['תאריך שליחת הדיווח'].astype(str) + ' ' + df['שעת שליחת הדיווח'].astype(str),
+       format='%d/%m/%Y %H:%M:%S',
+       errors='coerce'
+   )
+   
+   if df['datetime'].dt.tz is not None:
+       df['datetime'] = df['datetime'].dt.tz_localize(None)
+   
+   try:
+       df['datetime'] = df['datetime'].dt.tz_localize('Asia/Jerusalem', ambiguous='earliest', nonexistent='shift_forward')
+   except Exception as e:
+       print(f"Warning: Time localization error: {str(e)}")
+       df = df[df['datetime'].notna()]
+   
+   current_time = datetime.now(timezone.utc).astimezone(israel_tz)
+   
+   df['time_elapsed_minutes'] = (current_time - df['datetime']).dt.total_seconds() / 60
+   df['time_elapsed_minutes'] = df['time_elapsed_minutes'].clip(lower=0)
+   
+   return df
 
 def calculate_decay_rate(initial_intensity: float) -> float:
     """
