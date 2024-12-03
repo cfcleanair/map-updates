@@ -309,6 +309,7 @@ def update_data() -> None:
         combined_df = combined_df[combined_df['intensity'] > 0]
         
         if len(combined_df) > 0:
+            combined_df = combined_df.sort_values(by='datetime', ascending=True)
             combined_gdf = gpd.GeoDataFrame(
                 combined_df,
                 geometry=gpd.points_from_xy(combined_df['lon'], combined_df['lat']),
