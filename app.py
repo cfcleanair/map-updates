@@ -140,7 +140,9 @@ def process_raw_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # Drop rows with NaT in 'datetime' after localization
     df = df[df['datetime'].notna()]
     
+    print(f"Current time: {datetime.now()}")
     current_time = datetime.now(timezone.utc).astimezone(israel_tz)
+    print(f"Current time converted: {current_time}")
     
     df['time_elapsed_minutes'] = (current_time - df['datetime']).dt.total_seconds() / 60
     df['time_elapsed_minutes'] = df['time_elapsed_minutes'].clip(lower=0)
