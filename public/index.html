@@ -368,7 +368,18 @@
                     backgroundColor: '#f8f8f8',
                     clickableIcons: false,
                     tilt: 0,
-                    maxZoom: 17
+                    maxZoom: 17,
+                    minZoom: 8,
+                    gestureHandling: 'greedy',
+                    restriction: {
+                        latLngBounds: {
+                            north: 33.5,
+                            south: 29.5,
+                            east: 36.0,
+                            west: 34.0
+                        },
+                        strictBounds: true
+                    }
                 };
 
                 map = new google.maps.Map(document.getElementById('map'), mapOptions);
@@ -459,8 +470,7 @@
                 }
 
                 let lastFetchTime = Date.now();
-                updateInterval = setInterval(() => {
-                    const now = Date.now();
+                updateInterval = setInterval(() => {const now = Date.now();
                     if (now - lastFetchTime >= window.mapConfig.refreshInterval) {
                         lastFetchTime = now;
                         fetchData();
