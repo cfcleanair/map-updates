@@ -165,7 +165,6 @@
     </style>
 </head>
 <body>
-    <!-- Enhanced Loading Screen -->
     <div id="loadingScreen" class="loading-screen">
         <div class="loading-container">
             <div class="spinner-container">
@@ -184,7 +183,6 @@
     </div>
     <div id="map"></div>
 
-    <!-- Initial configuration -->
     <script>
         window.ENV = {
             GOOGLE_MAPS_API_KEY: '%%GOOGLE_MAPS_API_KEY%%'
@@ -238,14 +236,12 @@
             }
         };
 
-        // Track dependencies loading
         window.depsLoaded = {
             turf: false,
             googleMaps: false
         };
     </script>
 
-    <!-- Main application code -->
     <script>
         (function() {
             'use strict';
@@ -493,9 +489,7 @@
         })();
     </script>
 
-    <!-- Load dependencies -->
     <script>
-        // Function to load Google Maps
         function loadGoogleMapsScript() {
             const script = document.createElement('script');
             script.src = `https://maps.googleapis.com/maps/api/js?key=${window.ENV.GOOGLE_MAPS_API_KEY}&libraries=visualization&callback=googleMapsLoaded`;
@@ -503,31 +497,26 @@
             document.head.appendChild(script);
         }
 
-        // Callback for Google Maps load
         window.googleMapsLoaded = function() {
             window.depsLoaded.googleMaps = true;
             checkAllDependencies();
         };
 
-        // Callback for Turf.js load
         window.turfLoaded = function() {
             window.depsLoaded.turf = true;
             loadGoogleMapsScript();
         };
 
-        // Check if all dependencies are loaded
         function checkAllDependencies() {
             if (window.depsLoaded.turf && window.depsLoaded.googleMaps) {
                 window.initializeMapWhenReady();
             }
         }
 
-        // Error handler for script loading
         function handleScriptError(scriptName) {
             console.error(`Failed to load ${scriptName}. Please refresh the page.`);
         }
 
-        // Start loading dependencies
         document.addEventListener('DOMContentLoaded', function() {
             // Load Turf.js first
             const turfScript = document.createElement('script');
