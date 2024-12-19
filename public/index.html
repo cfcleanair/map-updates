@@ -30,7 +30,6 @@
             opacity: 1;
         }
 
-        /* Enhanced Loading Screen Styles */
         .loading-screen {
             position: fixed;
             top: 0;
@@ -193,10 +192,10 @@
             refreshInterval: 60000,
             retryInterval: 5000,
             map: {
-                initialZoom: 3,
+                initialZoom: 7.5,
                 defaultCenter: {
-                    lat: 32.0853,
-                    lng: 34.7818
+                    lat: 31.5,
+                    lng: 34.85
                 },
                 defaultStyles: [
                     {
@@ -248,7 +247,7 @@
 
             const CACHE_KEY = 'odor_heatmap_data';
             const CACHE_TIMESTAMP_KEY = 'odor_heatmap_timestamp';
-            const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
+            const CACHE_MAX_AGE = 24 * 60 * 60 * 1000;
 
             let map, heatmap;
             let currentRadius = window.mapConfig.heatmap.initialRadius;
@@ -449,7 +448,6 @@
                 const zoom = map.getZoom();
                 const newRadius = calculateRadiusForZoom(zoom);
                 
-                // Only update if the radius has actually changed
                 if (currentRadius !== newRadius) {
                     currentRadius = newRadius;
                     requestAnimationFrame(() => {
@@ -527,7 +525,6 @@
         }
 
         document.addEventListener('DOMContentLoaded', function() {
-            // Load Turf.js first
             const turfScript = document.createElement('script');
             turfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js';
             turfScript.onload = window.turfLoaded;
