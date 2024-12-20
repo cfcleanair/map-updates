@@ -192,7 +192,6 @@
             refreshInterval: 60000,
             retryInterval: 5000,
             map: {
-                initialZoom: 3,
                 defaultCenter: {
                     lat: 31.5,
                     lng: 34.85
@@ -359,7 +358,6 @@
 
             function initializeMap(center) {
                 const mapOptions = {
-                    zoom: window.mapConfig.map.initialZoom,
                     center: center,
                     mapTypeId: 'roadmap',
                     styles: window.mapConfig.map.defaultStyles,
@@ -390,7 +388,7 @@
                     maxIntensity: 5
                 });
 
-                let lastZoomLevel = window.mapConfig.map.initialZoom;
+                let lastZoomLevel = map.getZoom();
                 map.addListener('zoom_changed', () => {
                     const currentZoom = Math.round(map.getZoom());
                     if (currentZoom !== lastZoomLevel) {
