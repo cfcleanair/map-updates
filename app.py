@@ -35,6 +35,7 @@ REQUIRED_COLUMNS = [
     'בדיקה',
     'ספאם'
 ]
+FIRST_REPORT_DATE = datetime(2024, 4, 4, tzinfo=tz.gettz('Asia/Jerusalem'))
 
 class CustomJSONEncoder(json.JSONEncoder):
     """
@@ -433,9 +434,26 @@ def home() -> Dict[str, Any]:
             "odor": "/odor",
             "odor_historical": "/odor/historical",
             "odor_timerange": "/odor/timerange",
+            "odor_archive": "/odor/archive",
             "status": "/status"
         }
     })
+
+@app.route('/odor/archive')
+@cache.cached(timeout=300)  # Cache for 5 minutes since historical data changes less frequently
+def serve_archive_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
+    """
+    Serve complete archive of all odor data as GeoJSON.
+    
+    Returns:
+        Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON Response or error tuple
+    """
+    try:
+        archive_geojson = generate_heatmap_for_timerange(FIRST_REPORT_DATE, 
+            datetime.now(tz.gettz('Asia/Jerusalem')) + timedelta(days=1))
+        return gzip_response(archive_geojson)
+    except Exception as e:
+        return jsonify({"error": f"Error processing request: {str(e)}"}), 500
 
 @app.route('/odor')
 @cache.cached(timeout=60, key_prefix='odor_data')
