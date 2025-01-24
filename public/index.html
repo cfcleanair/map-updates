@@ -360,9 +360,17 @@
 
             function initializeMap(center) {
                 console.log('Initializing map with center:', center);
+                const bounds = {
+                    north: 33.5,
+                    south: 29.5,
+                    east: 36.0,
+                    west: 34.0
+                };
+                
                 const mapOptions = {
                     center: center,
-                    zoom: 12,
+                    zoom: 8,
+                    maxZoom: 16,
                     mapTypeId: 'roadmap',
                     styles: window.mapConfig.map.defaultStyles,
                     optimized: true,
@@ -371,12 +379,7 @@
                     tilt: 0,
                     gestureHandling: 'greedy',
                     restriction: {
-                        latLngBounds: {
-                            north: 33.5,
-                            south: 29.5,
-                            east: 36.0,
-                            west: 34.0
-                        },
+                        latLngBounds: bounds,
                         strictBounds: true
                     }
                 };
@@ -384,6 +387,13 @@
                 console.log('Creating map with options:', mapOptions);
                 map = new google.maps.Map(document.getElementById('map'), mapOptions);
                 console.log('Map created:', map);
+
+                // Fit bounds to show all of Israel
+                const israelBounds = new google.maps.LatLngBounds(
+                    new google.maps.LatLng(bounds.south, bounds.west),
+                    new google.maps.LatLng(bounds.north, bounds.east)
+                );
+                map.fitBounds(israelBounds);
 
                 heatmap = new google.maps.visualization.HeatmapLayer({
                     map,
@@ -472,7 +482,6 @@
             }
 
             function calculateRadiusForZoom(zoom) {
-                if (zoom < 9) return 12;
                 return Math.min(30, Math.pow(2, zoom - 5));
             }
 
