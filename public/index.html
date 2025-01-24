@@ -19,11 +19,12 @@
         }
 
         #map {
-            height: 100%;
-            width: 100%;
-            background: #f8f8f8;
-            opacity: 0;
-            transition: opacity 0.5s ease-in-out;
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100vh !important;
+            width: 100vw !important;
+            z-index: 1;
         }
 
         #map.loaded {
@@ -41,13 +42,14 @@
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            z-index: 1000;
+            z-index: 2;
             transition: opacity 0.5s ease-in-out;
         }
-
+        
         .loading-screen.hidden {
             opacity: 0;
             pointer-events: none;
+            z-index: 0;
         }
 
         .loading-container {
@@ -360,6 +362,7 @@
                 console.log('Initializing map with center:', center);
                 const mapOptions = {
                     center: center,
+                    zoom: 8,
                     mapTypeId: 'roadmap',
                     styles: window.mapConfig.map.defaultStyles,
                     optimized: true,
@@ -401,6 +404,18 @@
                         });
                     }
                 });
+
+                setTimeout(() => {
+                    const mapDiv = document.getElementById('map');
+                    console.log('Map div computed style:', {
+                        width: window.getComputedStyle(mapDiv).width,
+                        height: window.getComputedStyle(mapDiv).height,
+                        position: window.getComputedStyle(mapDiv).position,
+                        zIndex: window.getComputedStyle(mapDiv).zIndex,
+                        opacity: window.getComputedStyle(mapDiv).opacity,
+                        display: window.getComputedStyle(mapDiv).display
+                    });
+                }, 1000);
             }
 
             function convertGeoJsonToHeatmapData(geoJson) {
