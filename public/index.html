@@ -357,6 +357,7 @@
             }
 
             function initializeMap(center) {
+                console.log('Initializing map with center:', center);
                 const mapOptions = {
                     center: center,
                     mapTypeId: 'roadmap',
@@ -377,8 +378,10 @@
                         strictBounds: true
                     }
                 };
-
+                
+                console.log('Creating map with options:', mapOptions);
                 map = new google.maps.Map(document.getElementById('map'), mapOptions);
+                console.log('Map created:', map);
 
                 heatmap = new google.maps.visualization.HeatmapLayer({
                     map,
