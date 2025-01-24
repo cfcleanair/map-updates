@@ -362,14 +362,13 @@
                 console.log('Initializing map with center:', center);
                 const mapOptions = {
                     center: center,
-                    zoom,
+                    zoom: 6,
                     mapTypeId: 'roadmap',
                     styles: window.mapConfig.map.defaultStyles,
                     optimized: true,
                     backgroundColor: '#f8f8f8',
                     clickableIcons: false,
                     tilt: 0,
-                    maxZoom: 16,
                     gestureHandling: 'greedy',
                     restriction: {
                         latLngBounds: {
