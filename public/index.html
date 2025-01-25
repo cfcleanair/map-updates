@@ -378,13 +378,6 @@
                 map = new google.maps.Map(document.getElementById('map'), mapOptions);
                 console.log('Map created:', map);
 
-                // Fit bounds to show all of Israel
-                const israelBounds = new google.maps.LatLngBounds(
-                    new google.maps.LatLng(bounds.south, bounds.west),
-                    new google.maps.LatLng(bounds.north, bounds.east)
-                );
-                map.fitBounds(israelBounds);
-
                 heatmap = new google.maps.visualization.HeatmapLayer({
                     map,
                     radius: currentRadius,
