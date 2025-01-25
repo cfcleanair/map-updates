@@ -360,12 +360,6 @@
 
             function initializeMap(center) {
                 console.log('Initializing map with center:', center);
-                const bounds = {
-                    north: 34.0,
-                    south: 29.0,
-                    east: 37.0,
-                    west: 33.0
-                };
                 
                 const mapOptions = {
                     center: center,
@@ -378,11 +372,7 @@
                     backgroundColor: '#f8f8f8',
                     clickableIcons: false,
                     tilt: 0,
-                    gestureHandling: 'greedy',
-                    restriction: {
-                        latLngBounds: bounds,
-                        strictBounds: true
-                    }
+                    gestureHandling: 'greedy'
                 };
                 
                 console.log('Creating map with options:', mapOptions);
