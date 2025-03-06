@@ -498,25 +498,15 @@ def serve_historical_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int
 
 @app.route('/odor/timerange')
 def serve_timerange_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
-    """
-    Serve odor data as GeoJSON for a specific time range without decay.
-    
-    Parameters:
-        start_time (str): ISO format timestamp for range start
-        end_time (str): ISO format timestamp for range end
-        
-    Returns:
-        Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON Response or error tuple
-        
-    Raises:
-        ValueError: If timestamp format is invalid
-        Exception: If there's an error processing the request
-    """
     start_time_str = request.args.get('start_time')
     end_time_str = request.args.get('end_time')
     
     if not start_time_str or not end_time_str:
         return jsonify({"error": "Missing start_time or end_time parameter"}), 400
+    
+    # Remove any trailing query parameters if present
+    start_time_str = start_time_str.split('?')[0]
+    end_time_str = end_time_str.split('?')[0]
     
     try:
         start_time = datetime.fromisoformat(start_time_str)
