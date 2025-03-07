@@ -33,7 +33,10 @@ REQUIRED_COLUMNS = [
     'עוצמת הריח',
     'צבע העשן',
     'בדיקה',
-    'ספאם'
+    'ספאם',
+    'אופי הריח',
+    'חומר נשרף משוער',
+    'תסמינים רפואיים'
 ]
 FIRST_REPORT_DATE = datetime(2024, 4, 4, tzinfo=tz.gettz('Asia/Jerusalem'))
 
