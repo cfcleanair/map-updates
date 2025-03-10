@@ -120,6 +120,7 @@ def process_raw_dataframe(df: pd.DataFrame, reference_time: Optional[datetime] =
     israel_tz = tz.gettz('Asia/Jerusalem')
     df = df[REQUIRED_COLUMNS].copy()
     df = df[(df['בדיקה'].fillna(0) != 1) & (df['ספאם'].fillna(0) != 1)]
+    df = df.drop(columns=['בדיקה', 'ספאם'])
     df = df[df['קואורדינטות'].notna() & ~df['קואורדינטות'].astype(str).str.contains('המיקום לא נמצא', na=False)]
     
     df['datetime'] = pd.to_datetime(
@@ -333,7 +334,7 @@ def update_data() -> None:
     global latest_odor_geojson, last_update_time
     try:
         latest_odor_geojson = generate_heatmap_for_timestamp(datetime.now(tz.gettz('Asia/Jerusalem')))
-        last_update_time = datetime.now()
+        last_update_time = datetime.now(tz.gettz('Asia/Jerusalem'))
         cache.delete('odor_data')
     except Exception as e:
         print(f"[{datetime.now()}] ERROR updating data: {str(e)}")
