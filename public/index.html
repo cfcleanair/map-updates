@@ -1,555 +1,165 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Odor Nuisance Heatmap</title>
-    <link rel="preconnect" href="https://maps.googleapis.com">
-    <link rel="preconnect" href="https://maps.gstatic.com">
-    <link rel="preconnect" href="https://web-production-0bd7a.up.railway.app">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    
-    <style>
-        body, html {
-            height: 100%;
-            margin: 0;
-            padding: 0;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Odor Nuisance Heatmap – Refined Visualization</title>
+<link rel="preconnect" href="https://basemaps.cartocdn.com" />
+<link rel="preconnect" href="https://unpkg.com" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f0f2f5; overflow: hidden; }
+  #map { position: absolute; inset: 0; width: 100vw; height: 100vh; opacity: 0; transition: opacity 0.5s ease-in-out; }
+  #map.loaded { opacity: 1; }
 
-        #map {
-            position: absolute;
-            top: 0;
-            left: 0;
-            height: 100vh !important;
-            width: 100vw !important;
-            z-index: 1;
-        }
+  /* --- Sleek Loading Screen --- */
+  .loading-screen { position: fixed; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; background-color: #111827; z-index: 1000; transition: opacity 0.7s ease-out, visibility 0.7s ease-out; visibility: visible; opacity: 1; font-family: "Inter", sans-serif; }
+  .loading-screen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  .loading-content { display: flex; flex-direction: column; align-items: center; gap: 32px; padding: 20px; text-align: center; }
+  .spinner-container { width: 48px; height: 48px; }
+  .spinner { position: absolute; inset: 0; border: 3px solid rgba(255, 255, 255, 0.15); border-top-color: #ffffff; border-radius: 50%; animation: spin 1s linear infinite; }
+  .loading-text-container { display: flex; flex-direction: column; gap: 8px; }
+  .loading-text-main { font-size: 1.125rem; font-weight: 500; color: #f9fafb; letter-spacing: 0.025em; }
+  .loading-text-sub { font-size: 0.875rem; font-weight: 400; color: #6b7280; max-width: 300px; }
+  /* --- End of Sleek Loading Screen --- */
 
-        #map.loaded {
-            opacity: 1;
-        }
-
-        .loading-screen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 2;
-            transition: opacity 0.5s ease-in-out;
-        }
-        
-        .loading-screen.hidden {
-            opacity: 0;
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        .loading-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 25px;
-        }
-
-        .spinner-container {
-            position: relative;
-            width: 60px;
-            height: 60px;
-        }
-
-        .spinner {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            border: 3px solid transparent;
-            border-top-color: #3b82f6;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        .spinner-inner {
-            position: absolute;
-            width: 70%;
-            height: 70%;
-            left: 15%;
-            top: 15%;
-            border: 3px solid transparent;
-            border-top-color: #60a5fa;
-            border-radius: 50%;
-            animation: spin 0.75s linear infinite reverse;
-        }
-
-        .pulse {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            border-radius: 50%;
-            background: rgba(59, 130, 246, 0.1);
-            animation: pulse 2s ease-out infinite;
-        }
-
-        .loading-text {
-            color: #1f2937;
-            font-size: 16px;
-            font-weight: 500;
-            letter-spacing: 0.01em;
-            margin-top: 10px;
-            text-align: center;
-        }
-
-        .loading-subtext {
-            color: #6b7280;
-            font-size: 14px;
-            font-weight: 400;
-            margin-top: 8px;
-            text-align: center;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        @keyframes pulse {
-            0% {
-                transform: scale(0.95);
-                opacity: 0.5;
-            }
-            50% {
-                transform: scale(1);
-                opacity: 0.3;
-            }
-            100% {
-                transform: scale(1.05);
-                opacity: 0;
-            }
-        }
-
-        .loading-progress {
-            width: 150px;
-            height: 3px;
-            background: #e5e7eb;
-            border-radius: 2px;
-            overflow: hidden;
-            margin-top: 15px;
-        }
-
-        .progress-bar {
-            height: 100%;
-            width: 30%;
-            background: #3b82f6;
-            border-radius: 2px;
-            animation: progress 2s ease-in-out infinite;
-        }
-
-        @keyframes progress {
-            0% {
-                width: 0%;
-                transform: translateX(-100%);
-            }
-            50% {
-                width: 30%;
-            }
-            100% {
-                width: 0%;
-                transform: translateX(500%);
-            }
-        }
-    </style>
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .maplibregl-ctrl-bottom-right { bottom: 10px; right: 10px; }
+  .maplibregl-ctrl-attrib { background-color: rgba(255, 255, 255, 0.8); padding: 2px 8px; border-radius: 4px; }
+</style>
 </head>
 <body>
-    <div id="loadingScreen" class="loading-screen">
-        <div class="loading-container">
-            <div class="spinner-container">
-                <div class="pulse"></div>
-                <div class="spinner"></div>
-                <div class="spinner-inner"></div>
-            </div>
-            <div>
-                <div class="loading-text">Loading</div>
-                <div class="loading-subtext">Please wait while we prepare the map</div>
-            </div>
-            <div class="loading-progress">
-                <div class="progress-bar"></div>
-            </div>
-        </div>
+<div id="loadingScreen" class="loading-screen">
+  <div class="loading-content">
+    <div class="spinner-container"><div class="spinner"></div></div>
+    <div class="loading-text-container">
+      <div class="loading-text-main">Visualizing Odor Data</div>
+      <div class="loading-text-sub">Preparing the map and latest heatmap information.</div>
     </div>
-    <div id="map"></div>
+  </div>
+</div>
+<div id="map"></div>
+<script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+<script>
+  (function () {
+    "use strict";
+    const DATA_URL = "https://revolutionary-joyann-cfca-5a2342e6.koyeb.app/odor";
+    const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+    const CACHE_STORAGE_KEY = "odor_heatmap_data_simple_v2"; // Changed cache key to ensure fresh load
+    const CACHE_TIMESTAMP_KEY = "odor_heatmap_timestamp_simple_v2"; // Changed cache key
+    const CACHE_MAX_AGE_MS = 1 * 60 * 60 * 1000;
 
-    <script>
-        window.ENV = {
-            GOOGLE_MAPS_API_KEY: '%%GOOGLE_MAPS_API_KEY%%'
-        };
+    const loadingScreenEl = document.getElementById("loadingScreen");
+    const mapContainerEl = document.getElementById("map");
 
-        window.mapConfig = {
-            dataSource: 'https://revolutionary-joyann-cfca-5a2342e6.koyeb.app/odor',
-            refreshInterval: 60000,
-            retryInterval: 5000,
-            map: {
-                defaultCenter: {
-                    lat: 31.5,
-                    lng: 34.85
-                },
-                defaultStyles: [
-                    {
-                        featureType: "landscape",
-                        elementType: "geometry",
-                        stylers: [{ color: "#A8E08D" }]
-                    },
-                    {
-                        featureType: "water",
-                        elementType: "geometry",
-                        stylers: [{ color: "#a2daf2" }]
-                    },
-                    {
-                        featureType: "road",
-                        elementType: "geometry",
-                        stylers: [{ visibility: "simplified" }]
-                    },
-                    {
-                        featureType: "poi",
-                        elementType: "geometry",
-                        stylers: [{ visibility: "off" }]
-                    }
-                ]
+    let mapInstance;
+    let hasInitialDataLoaded = false;
+
+    const showLoadingScreen = () => loadingScreenEl.classList.remove("hidden");
+    const hideLoadingScreen = () => {
+      loadingScreenEl.classList.add("hidden");
+      mapContainerEl.classList.add("loaded");
+    };
+
+    const getCachedData = () => {
+      try {
+        const timestamp = Number(localStorage.getItem(CACHE_TIMESTAMP_KEY));
+        if (Date.now() - timestamp < CACHE_MAX_AGE_MS) {
+          const rawData = localStorage.getItem(CACHE_STORAGE_KEY);
+          return rawData ? JSON.parse(rawData) : null;
+        }
+      } catch (error) { /* Errors are intentionally suppressed */ }
+      return null;
+    };
+
+    const cacheData = (data) => {
+      try {
+        localStorage.setItem(CACHE_STORAGE_KEY, JSON.stringify(data));
+        localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+      } catch (error) { /* Errors are intentionally suppressed */ }
+    };
+
+    function initializeMap(initialGeoJsonData) {
+      if (mapInstance) return;
+
+      mapInstance = new maplibregl.Map({
+        container: "map",
+        style: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+        center: [34.85, 31.5], zoom: 7, maxZoom: 16, minZoom: 6, attributionControl: true,
+      });
+
+      mapInstance.addControl(new maplibregl.NavigationControl(), "bottom-right");
+      mapInstance.addControl(new maplibregl.ScaleControl({ maxWidth: 100, unit: 'metric' }));
+
+      mapInstance.on("load", () => {
+        try {
+          const validInitialData = initialGeoJsonData || { type: "FeatureCollection", features: [] };
+          mapInstance.addSource("odor-source", { type: "geojson", data: validInitialData });
+          mapInstance.addLayer({
+            id: "odor-heatmap-layer", type: "heatmap", source: "odor-source", maxzoom: 16,
+            paint: {
+              "heatmap-weight": ["coalesce", ["get", "intensity"], 1],
+              "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 7, 0.5, 12, 1, 16, 2],
+              "heatmap-color": [
+                "interpolate", ["linear"], ["heatmap-density"],
+                0, "rgba(0,0,255,0)", 0.1, "rgba(100,200,255,0.25)", 0.3, "rgba(0,255,150,0.4)",
+                0.5, "rgba(255,255,0,0.6)", 0.7, "rgba(255,165,0,0.7)", 0.9, "rgba(255,60,0,0.8)",
+                1, "rgba(200,0,0,0.85)"
+              ],
+              "heatmap-radius": ["interpolate", ["linear"], ["zoom"],
+                7,6, 8,9, 9,13, 10,18, 11,24, 12,30, 13,40, 14,50, 15,65, 16,80
+              ],
+              "heatmap-opacity": 0.7,
             },
-            heatmap: {
-                opacity: 0.7,
-                initialRadius: 7,
-                gradient: [
-                    'rgba(102, 187, 106, 0)',
-                    'rgba(255, 255, 0, 1)',
-                    'rgba(255, 191, 0, 1)',
-                    'rgba(255, 127, 0, 1)',
-                    'rgba(255, 63, 0, 1)',
-                    'rgba(255, 0, 0, 1)',
-                    'rgba(139, 0, 0, 1)'
-                ]
-            }
-        };
-
-        window.depsLoaded = {
-            turf: false,
-            googleMaps: false
-        };
-    </script>
-
-    <script>
-        (function() {
-            'use strict';
-
-            const CACHE_KEY = 'odor_heatmap_data';
-            const CACHE_TIMESTAMP_KEY = 'odor_heatmap_timestamp';
-            const CACHE_MAX_AGE = 24 * 60 * 60 * 1000;
-
-            let map, heatmap;
-            let currentRadius = window.mapConfig.heatmap.initialRadius;
-            let retryTimeout = null;
-            let updateInterval = null;
-
-            function hideLoadingScreen() {
-                const loadingScreen = document.getElementById('loadingScreen');
-                const mapElement = document.getElementById('map');
-                
-                loadingScreen.classList.add('hidden');
-                mapElement.classList.add('loaded');
-                
-                setTimeout(() => {
-                    loadingScreen.style.display = 'none';
-                }, 500);
-            }
-
-            function checkDependencies() {
-                return window.depsLoaded.turf && window.depsLoaded.googleMaps;
-            }
-
-            function loadCachedData() {
-                try {
-                    const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
-                    if (cachedTimestamp) {
-                        const timestamp = parseInt(cachedTimestamp, 10);
-                        const now = Date.now();
-                        const age = now - timestamp;
-
-                        if (age < CACHE_MAX_AGE) {
-                            const cachedData = localStorage.getItem(CACHE_KEY);
-                            if (cachedData) {
-                                return JSON.parse(cachedData);
-                            }
-                        }
-                    }
-                } catch (error) {
-                    console.warn('Error loading cached data:', error);
-                }
-                return null;
-            }
-
-            function saveToCache(data) {
-                try {
-                    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-                    localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-                } catch (error) {
-                    console.warn('Error saving to cache:', error);
-                }
-            }
-
-            async function fetchData(retryCount = 0) {
-                if (!checkDependencies()) return;
-
-                try {
-                    const response = await fetch(`${window.mapConfig.dataSource}?t=${Date.now()}`, {
-                        headers: {
-                            'Accept-Encoding': 'gzip',
-                            'Cache-Control': 'no-cache'
-                        }
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-
-                    const geoJsonData = await response.json();
-
-                    saveToCache(geoJsonData);
-                    updateHeatmap(geoJsonData);
-                    hideLoadingScreen(); 
-
-                    if (retryTimeout) {
-                        clearTimeout(retryTimeout);
-                        retryTimeout = null;
-                    }
-
-                } catch (error) {
-                    console.error('Data fetch failed:', error);
-                    handleFetchError(error, retryCount);
-                }
-            }
-
-            function handleFetchError(error, retryCount) {
-                const cachedData = loadCachedData();
-                if (cachedData) {
-                    updateHeatmap(cachedData);
-                    hideLoadingScreen();  
-                }
-
-                const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
-                retryTimeout = setTimeout(() => fetchData(retryCount + 1), retryDelay);
-            }
-
-            function updateHeatmap(geoJsonData) {
-                const heatmapData = convertGeoJsonToHeatmapData(geoJsonData);
-
-                if (!map) {
-                    initializeMap(window.mapConfig.map.defaultCenter);
-                }
-
-                if (heatmapData.length > 0) {
-                    requestAnimationFrame(() => {
-                        heatmap.setData(heatmapData);
-                    });
-                }
-            }
-
-            function initializeMap(center) {
-                console.log('Initializing map with center:', center);
-                
-                const mapOptions = {
-                    center: center,
-                    zoom: 7,
-                    maxZoom: 16,
-                    minZoom: 7,
-                    mapTypeId: 'roadmap',
-                    styles: window.mapConfig.map.defaultStyles,
-                    optimized: true,
-                    backgroundColor: '#f8f8f8',
-                    clickableIcons: false,
-                    tilt: 0,
-                    gestureHandling: 'greedy'
-                };
-                
-                console.log('Creating map with options:', mapOptions);
-                map = new google.maps.Map(document.getElementById('map'), mapOptions);
-                console.log('Map created:', map);
-
-                heatmap = new google.maps.visualization.HeatmapLayer({
-                    map,
-                    radius: currentRadius,
-                    opacity: window.mapConfig.heatmap.opacity,
-                    gradient: window.mapConfig.heatmap.gradient,
-                    maxIntensity: 5
-                });
-
-                let lastZoomLevel = map.getZoom();
-                map.addListener('zoom_changed', () => {
-                    const currentZoom = Math.round(map.getZoom());
-                    if (currentZoom !== lastZoomLevel) {
-                        lastZoomLevel = currentZoom;
-                        requestAnimationFrame(() => {
-                            updateHeatmapRadius();
-                        });
-                    }
-                });
-
-                setTimeout(() => {
-                    const mapDiv = document.getElementById('map');
-                    console.log('Map div computed style:', {
-                        width: window.getComputedStyle(mapDiv).width,
-                        height: window.getComputedStyle(mapDiv).height,
-                        position: window.getComputedStyle(mapDiv).position,
-                        zIndex: window.getComputedStyle(mapDiv).zIndex,
-                        opacity: window.getComputedStyle(mapDiv).opacity,
-                        display: window.getComputedStyle(mapDiv).display
-                    });
-                }, 1000);
-            }
-
-            function convertGeoJsonToHeatmapData(geoJson) {
-                if (!window.turf) {
-                    console.error('Turf.js not loaded');
-                    return [];
-                }
-
-                const heatmapPoints = [];
-                let maxIntensity = 0;
-
-                try {
-                    window.turf.featureEach(geoJson, feature => {
-                        if (feature.geometry?.type === "Point") {
-                            const [lng, lat] = feature.geometry.coordinates;
-                            if (isValidCoordinate(lat, lng)) {
-                                const point = new google.maps.LatLng(lat, lng);
-                                const intensity = feature.properties?.intensity || 1;
-
-                                maxIntensity = Math.max(maxIntensity, intensity);
-                                heatmapPoints.push({
-                                    location: point,
-                                    weight: parseFloat(intensity)
-                                });
-                            }
-                        }
-                    });
-
-                    if (heatmap && maxIntensity > 0) {
-                        heatmap.set('maxIntensity', maxIntensity);
-                    }
-
-                    return heatmapPoints;
-                } catch (error) {
-                    console.error('Error processing GeoJSON data:', error);
-                    return [];
-                }
-            }
-
-            function isValidCoordinate(lat, lng) {
-                return !isNaN(lat) && !isNaN(lng) &&
-                    Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
-            }
-
-            function updateHeatmapRadius() {
-                const zoom = map.getZoom();
-                const newRadius = calculateRadiusForZoom(zoom);
-                
-                if (currentRadius !== newRadius) {
-                    currentRadius = newRadius;
-                    requestAnimationFrame(() => {
-                        heatmap.set('radius', currentRadius);
-                    });
-                }
-            }
-
-            function calculateRadiusForZoom(zoom) {
-                console.log(`zoom level: ${zoom}`);
-                if (zoom === 7) return 8;
-                if (zoom === 8) return 15;
-                if (zoom === 9) return 20;
-                if (zoom === 10) return 30;
-                if (zoom === 11) return 35;
-                if (zoom === 12) return 55;
-                if (zoom === 13) return 75;
-                if (zoom === 14) return 120;
-                if (zoom === 15) return 150;
-                if (zoom === 16) return 200;
-                return 20;
-            }
-
-            function startUpdateInterval() {
-                if (updateInterval) {
-                    clearInterval(updateInterval);
-                }
-
-                let lastFetchTime = Date.now();
-                updateInterval = setInterval(() => {const now = Date.now();
-                    if (now - lastFetchTime >= window.mapConfig.refreshInterval) {
-                        lastFetchTime = now;
-                        fetchData();
-                    }
-                }, window.mapConfig.refreshInterval);
-            }
-
-            window.initializeMapWhenReady = function() {
-                if (!checkDependencies()) {
-                    return;
-                }
-
-                try {
-                    const cachedData = loadCachedData();
-                    if (cachedData) {
-                        updateHeatmap(cachedData);
-                    }
-
-                    fetchData();
-                    startUpdateInterval();
-
-                } catch (error) {
-                    console.error('Initialization error:', error);
-                }
-            };
-        })();
-    </script>
-
-    <script>
-        function loadGoogleMapsScript() {
-            const script = document.createElement('script');
-            script.src = `https://maps.googleapis.com/maps/api/js?key=${window.ENV.GOOGLE_MAPS_API_KEY}&libraries=visualization&callback=googleMapsLoaded`;
-            script.async = true;
-            document.head.appendChild(script);
+          });
+        } catch (err) { console.error("Error adding source/layer:", err); }
+        if (!hasInitialDataLoaded) {
+          hideLoadingScreen();
+          hasInitialDataLoaded = true;
         }
+      });
+      mapInstance.on('error', (e) => console.error("MapLibre GL error:", e.error ? e.error.message : e));
+    }
 
-        window.googleMapsLoaded = function() {
-            window.depsLoaded.googleMaps = true;
-            checkAllDependencies();
-        };
-
-        window.turfLoaded = function() {
-            window.depsLoaded.turf = true;
-            loadGoogleMapsScript();
-        };
-
-        function checkAllDependencies() {
-            if (window.depsLoaded.turf && window.depsLoaded.googleMaps) {
-                window.initializeMapWhenReady();
-            }
+    async function fetchAndUpdateData() {
+      try {
+        const response = await fetch(DATA_URL, { headers: { "Cache-Control": "no-cache" } });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(`HTTP ${response.status}: ${errorData.error || response.statusText}`);
         }
-
-        function handleScriptError(scriptName) {
-            console.error(`Failed to load ${scriptName}. Please refresh the page.`);
+        const geoJsonData = await response.json();
+        cacheData(geoJsonData);
+        if (mapInstance && mapInstance.isStyleLoaded() && mapInstance.getSource("odor-source")) {
+          mapInstance.getSource("odor-source").setData(geoJsonData || { type: "FeatureCollection", features: [] });
+        } else if (!hasInitialDataLoaded) {
+          initializeMap(geoJsonData);
         }
+      } catch (error) {
+        console.error("Fetch error:", error);
+        if (!hasInitialDataLoaded) {
+          const cachedData = getCachedData();
+          if (cachedData) initializeMap(cachedData);
+          else {
+            if (!mapInstance) hideLoadingScreen();
+            const subTextEl = document.querySelector('#loadingScreen .loading-text-sub');
+            if (subTextEl) subTextEl.textContent = `Error: ${error.message.substring(0,100)}`;
+          }
+        }
+      }
+    }
 
-        document.addEventListener('DOMContentLoaded', function() {
-            const turfScript = document.createElement('script');
-            turfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js';
-            turfScript.onload = window.turfLoaded;
-            turfScript.onerror = () => handleScriptError('Turf.js');
-            document.head.appendChild(turfScript);
-        });
-    </script>
+    function boot() {
+      showLoadingScreen();
+      const cachedData = getCachedData();
+      if (cachedData) initializeMap(cachedData);
+      fetchAndUpdateData();
+      setInterval(fetchAndUpdateData, REFRESH_INTERVAL_MS);
+    }
+    boot();
+  })();
+</script>
 </body>
 </html>
