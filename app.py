@@ -68,16 +68,15 @@ def gzip_response(data: Dict[str, Any]) -> Response:
         Response: Flask Response object with gzipped content and appropriate headers
     """
     gzip_buffer = gzip.compress(json.dumps(data, cls=CustomJSONEncoder).encode('utf-8'))
-    return Response(
-        gzip_buffer,
-        mimetype='application/json',
-        headers={
-            'Access-Control-Allow-Origin': '*',
-            'Content-Encoding': 'gzip',
-            'Last-Modified': last_update_time.strftime("%a, %d %b %Y %H:%M:%S GMT"),
-            'Cache-Control': 'public, max-age=60'
-        }
-    )
+    headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Encoding': 'gzip',
+        'Cache-Control': 'public, max-age=60'
+    }
+    if last_update_time:
+        headers['Last-Modified'] = last_update_time.astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        headers['X-Data-Last-Update'] = last_update_time.isoformat()
+    return Response(gzip_buffer, mimetype='application/json', headers=headers)
 
 def get_google_credentials() -> service_account.Credentials:
     """
@@ -187,17 +186,11 @@ def split_coordinates(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         pd.DataFrame: DataFrame with separated lat/lon columns
     """
-    df = df[df['קואורדינטות'].str.match(r'^-?\d+\.?\d*,-?\d+\.?\d*$', na=False)]
-    
+    df = df[df['קואורדינטות'].str.match(r'^-?\d+\.?\d*,-?\d+\.?\d*$', na=False)].copy()
     coords_split = df['קואורדינטות'].str.split(',', expand=True)
-    if coords_split.shape[1] >= 2:
-        df['lat'] = pd.to_numeric(coords_split[0], errors='coerce')
-        df['lon'] = pd.to_numeric(coords_split[1], errors='coerce')
-    else:
-        df['lat'] = np.nan
-        df['lon'] = np.nan
-    
-    return df[df['lat'].notna() & df['lon'].notna()]
+    df.loc[:, 'lat'] = pd.to_numeric(coords_split[0], errors='coerce')
+    df.loc[:, 'lon'] = pd.to_numeric(coords_split[1], errors='coerce')
+    return df[df['lat'].notna() & df['lon'].notna()].copy()
 
 def randomize_coordinates(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -211,24 +204,19 @@ def randomize_coordinates(df: pd.DataFrame) -> pd.DataFrame:
     """
     earth_radius = 6378137
     max_distance = 300
-
     random_distances = np.random.uniform(0, max_distance, size=len(df))
     random_bearings = np.random.uniform(0, 360, size=len(df))
     random_bearings_rad = np.deg2rad(random_bearings)
-
     lat_rad = np.deg2rad(df['lat'].values)
     lon_rad = np.deg2rad(df['lon'].values)
-
     new_lat_rad = np.arcsin(
         np.sin(lat_rad) * np.cos(random_distances / earth_radius) +
         np.cos(lat_rad) * np.sin(random_distances / earth_radius) * np.cos(random_bearings_rad)
     )
-
     new_lon_rad = lon_rad + np.arctan2(
         np.sin(random_bearings_rad) * np.sin(random_distances / earth_radius) * np.cos(lat_rad),
         np.cos(random_distances / earth_radius) - np.sin(lat_rad) * np.sin(new_lat_rad)
     )
-
     df['lat'] = np.rad2deg(new_lat_rad)
     df['lon'] = np.rad2deg(new_lon_rad)
     return df
@@ -245,7 +233,6 @@ def create_geojson_no_buffer(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
     """
     gdf = gdf.replace({np.nan: None})
     features: List[Dict[str, Any]] = []
-    
     for _, row in gdf.iterrows():
         geom = row['geometry']
         props = row.drop('geometry').to_dict()
@@ -256,7 +243,6 @@ def create_geojson_no_buffer(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
             "properties": props
         }
         features.append(feature)
-
     return {
         "type": "FeatureCollection",
         "features": features
@@ -277,37 +263,27 @@ def generate_heatmap_for_timestamp(timestamp: datetime) -> Dict[str, Any]:
     """
     creds = get_google_credentials()
     gc = gspread.authorize(creds)
-    
     sheet_url = "https://docs.google.com/spreadsheets/d/1PMm_4Xkrv4Bmy7p9pI8Smnqzl12xgBVotYBEb2O45cg"
     spreadsheet = gc.open_by_url(sheet_url)
     worksheet = spreadsheet.worksheet('Sheet1')
-    
     df_original = process_raw_dataframe(get_as_dataframe(worksheet), timestamp)
-    
     odor_df = df_original[df_original['סוג דיווח'] == 'מפגע ריח'].copy()
     waste_df = df_original[df_original['סוג דיווח'] == 'מפגע פסולת'].copy()
-    
     valid_smoke_colors = ['לבן', 'אפור', 'שחור']
     valid_waste_df = waste_df[
         waste_df['צבע העשן'].isin(valid_smoke_colors) &
         waste_df['צבע העשן'].notna() &
         (waste_df['צבע העשן'] != 'אין עשן')
     ].copy()
-    
     valid_waste_df['עוצמת הריח'] = 6
-    
     odor_df = split_coordinates(odor_df)
     valid_waste_df = split_coordinates(valid_waste_df)
-    
     odor_df['עוצמת הריח'] = pd.to_numeric(odor_df['עוצמת הריח'], errors='coerce').fillna(0)
     odor_df['intensity'] = odor_df.apply(calculate_intensity, axis=1)
     valid_waste_df['intensity'] = valid_waste_df.apply(calculate_intensity, axis=1)
-    
     odor_df = randomize_coordinates(odor_df)
-    
     combined_df = pd.concat([odor_df, valid_waste_df])
     combined_df = combined_df[combined_df['intensity'] > 0]
-    
     if len(combined_df) > 0:
         combined_df = combined_df.sort_values(by='datetime', ascending=True)
         combined_gdf = gpd.GeoDataFrame(
@@ -320,7 +296,6 @@ def generate_heatmap_for_timestamp(timestamp: datetime) -> Dict[str, Any]:
             columns=combined_df.columns.tolist() + ['geometry'],
             crs='EPSG:4326'
         )
-    
     return create_geojson_no_buffer(combined_gdf)
 
 def update_data() -> None:
@@ -341,7 +316,7 @@ def update_data() -> None:
         print("Error details:", e.__class__.__name__)
         import traceback
         print(traceback.format_exc())
-        
+
 def calculate_intensity_no_decay(intensity: float) -> float:
     """
     Calculate intensity without applying decay over time.
@@ -373,41 +348,30 @@ def generate_heatmap_for_timerange(start_time: datetime, end_time: datetime) -> 
         start_time = start_time.replace(tzinfo=israel_tz)
     if end_time.tzinfo is None:
         end_time = end_time.replace(tzinfo=israel_tz)
-        
     creds = get_google_credentials()
     gc = gspread.authorize(creds)
-    
     sheet_url = "https://docs.google.com/spreadsheets/d/1PMm_4Xkrv4Bmy7p9pI8Smnqzl12xgBVotYBEb2O45cg"
     spreadsheet = gc.open_by_url(sheet_url)
     worksheet = spreadsheet.worksheet('Sheet1')
-    
     df = process_raw_dataframe(get_as_dataframe(worksheet))
     df = df[(df['datetime'] >= start_time) & (df['datetime'] <= end_time)]
-    
     odor_df = df[df['סוג דיווח'] == 'מפגע ריח'].copy()
     waste_df = df[df['סוג דיווח'] == 'מפגע פסולת'].copy()
-    
     valid_smoke_colors = ['לבן', 'אפור', 'שחור']
     valid_waste_df = waste_df[
         waste_df['צבע העשן'].isin(valid_smoke_colors) &
         waste_df['צבע העשן'].notna() &
         (waste_df['צבע העשן'] != 'אין עשן')
     ].copy()
-    
     valid_waste_df['עוצמת הריח'] = 6
-    
     odor_df = split_coordinates(odor_df)
     valid_waste_df = split_coordinates(valid_waste_df)
-    
     odor_df['עוצמת הריח'] = pd.to_numeric(odor_df['עוצמת הריח'], errors='coerce').fillna(0)
     odor_df['intensity'] = odor_df['עוצמת הריח'].apply(calculate_intensity_no_decay)
     valid_waste_df['intensity'] = valid_waste_df['עוצמת הריח'].apply(calculate_intensity_no_decay)
-    
     odor_df = randomize_coordinates(odor_df)
-    
     combined_df = pd.concat([odor_df, valid_waste_df])
     combined_df = combined_df[combined_df['intensity'] > 0]
-    
     if len(combined_df) > 0:
         combined_df = combined_df.sort_values(by='datetime', ascending=True)
         combined_gdf = gpd.GeoDataFrame(
@@ -420,7 +384,6 @@ def generate_heatmap_for_timerange(start_time: datetime, end_time: datetime) -> 
             columns=combined_df.columns.tolist() + ['geometry'],
             crs='EPSG:4326'
         )
-    
     return create_geojson_no_buffer(combined_gdf)
 
 @app.route('/')
@@ -444,7 +407,7 @@ def home() -> Dict[str, Any]:
     })
 
 @app.route('/odor/archive')
-@cache.cached(timeout=300)  # Cache for 5 minutes since historical data changes less frequently
+@cache.cached(timeout=300)
 def serve_archive_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
     """
     Serve complete archive of all odor data as GeoJSON.
@@ -453,14 +416,12 @@ def serve_archive_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
         Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON Response or error tuple
     """
     try:
-        archive_geojson = generate_heatmap_for_timerange(FIRST_REPORT_DATE, 
-            datetime.now(tz.gettz('Asia/Jerusalem')) + timedelta(days=1))
+        archive_geojson = generate_heatmap_for_timerange(FIRST_REPORT_DATE, datetime.now(tz.gettz('Asia/Jerusalem')) + timedelta(days=1))
         return gzip_response(archive_geojson)
     except Exception as e:
         return jsonify({"error": f"Error processing request: {str(e)}"}), 500
 
 @app.route('/odor')
-@cache.cached(timeout=60, key_prefix='odor_data')
 def serve_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
     """
     Serve latest odor data as GeoJSON.
@@ -468,6 +429,11 @@ def serve_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
     Returns:
         Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON Response or error tuple
     """
+    israel_tz = tz.gettz('Asia/Jerusalem')
+    now_il = datetime.now(israel_tz)
+    stale = (last_update_time is None) or ((now_il - last_update_time) > timedelta(seconds=75))
+    if stale:
+        update_data()
     if latest_odor_geojson is None:
         return jsonify({"error": "No data available"}), 503
     return gzip_response(latest_odor_geojson)
@@ -490,7 +456,6 @@ def serve_historical_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int
     timestamp_str = request.args.get('timestamp')
     if not timestamp_str:
         return jsonify({"error": "Missing timestamp parameter"}), 400
-    
     try:
         timestamp = datetime.fromisoformat(timestamp_str)
         historical_geojson = generate_heatmap_for_timestamp(timestamp)
@@ -502,26 +467,33 @@ def serve_historical_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int
 
 @app.route('/odor/timerange')
 def serve_timerange_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
+    """
+    Serve odor data as GeoJSON for a specific time range.
+    
+    Parameters:
+        start_time (str): ISO format start time from query parameter
+        end_time (str): ISO format end time from query parameter
+        
+    Returns:
+        Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON Response or error tuple
+        
+    Raises:
+        ValueError: If timestamp formats are invalid or start_time is after end_time
+        Exception: If there's an error processing the request
+    """
     start_time_str = request.args.get('start_time')
     end_time_str = request.args.get('end_time')
-    
     if not start_time_str or not end_time_str:
         return jsonify({"error": "Missing start_time or end_time parameter"}), 400
-    
-    # Remove any trailing query parameters if present
     start_time_str = start_time_str.split('?')[0]
     end_time_str = end_time_str.split('?')[0]
-    
     try:
         start_time = datetime.fromisoformat(start_time_str)
         end_time = datetime.fromisoformat(end_time_str)
-        
         if start_time > end_time:
             return jsonify({"error": "start_time must be before end_time"}), 400
-            
         timerange_geojson = generate_heatmap_for_timerange(start_time, end_time)
         return gzip_response(timerange_geojson)
-        
     except ValueError as e:
         return jsonify({"error": f"Invalid timestamp format: {str(e)}"}), 400
     except Exception as e:
