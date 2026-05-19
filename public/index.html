@@ -44,7 +44,7 @@
 <script>
   (function () {
     "use strict";
-    const DATA_URL = "https://web-production-7226.up.railway.app/odor";
+    const DATA_URL = "https://web-production-7226.up.railway.app/odor/timerange?start_time=2025-01-01T00:00:00&end_time=2025-12-31T23:59:59";
     const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
     const CACHE_STORAGE_KEY = "odor_heatmap_data_simple_v2";
     const CACHE_TIMESTAMP_KEY = "odor_heatmap_timestamp_simple_v2";
@@ -80,6 +80,23 @@
       } catch (error) { }
     };
 
+    // Filter out erroneous points (Dead Sea, isolated Negev)
+    const filterBadPoints = (geoJson) => {
+      if (!geoJson || !geoJson.features) return geoJson;
+      const badPoints = [
+        { lon: 35.47319, lat: 31.55903 }, // Dead Sea
+        { lon: 35.03882, lat: 30.82956 }, // Isolated Negev
+      ];
+      const tolerance = 0.01;
+      geoJson.features = geoJson.features.filter(f => {
+        const [lon, lat] = f.geometry.coordinates;
+        return !badPoints.some(bp =>
+          Math.abs(lon - bp.lon) < tolerance && Math.abs(lat - bp.lat) < tolerance
+        );
+      });
+      return geoJson;
+    };
+
     function initializeMap(initialGeoJsonData) {
       if (mapInstance) return;
 
@@ -93,12 +110,8 @@
         style: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
         center: [35.2, 31.8], 
         zoom: 8, 
-        maxZoom: 14, 
-        minZoom: 2,
-        maxBounds: [
-          [32.0, 29.0],
-          [38.0, 33.5]
-        ],
+        maxZoom: 14,
+        minZoom: 5,
         attributionControl: true,
         locale: {
           'NavigationControl.ZoomIn': 'הגדל תצוגה',
@@ -124,25 +137,40 @@
       }));
 
       mapInstance.on("load", () => {
-
         try {
           const validInitialData = initialGeoJsonData || { type: "FeatureCollection", features: [] };
           mapInstance.addSource("odor-source", { type: "geojson", data: validInitialData });
+          // Heatmap layer for overview
           mapInstance.addLayer({
-            id: "odor-heatmap-layer", type: "heatmap", source: "odor-source", maxzoom: 16,
+            id: "odor-heatmap-layer", type: "heatmap", source: "odor-source", maxzoom: 12,
             paint: {
               "heatmap-weight": ["coalesce", ["get", "intensity"], 1],
-              "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 7, 0.5, 12, 1, 16, 2],
+              "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 5, 0.15, 8, 0.25, 12, 0.4],
               "heatmap-color": [
                 "interpolate", ["linear"], ["heatmap-density"],
-                0, "rgba(0,0,255,0)", 0.1, "rgba(100,200,255,0.25)", 0.3, "rgba(0,255,150,0.4)",
-                0.5, "rgba(255,255,0,0.6)", 0.7, "rgba(255,165,0,0.7)", 0.9, "rgba(255,60,0,0.8)",
-                1, "rgba(200,0,0,0.85)"
+                0, "rgba(0,0,255,0)", 0.15, "rgba(100,200,255,0.9)", 0.35, "rgba(0,255,150,0.9)",
+                0.55, "rgba(255,255,0,0.9)", 0.75, "rgba(255,180,0,0.9)", 0.92, "rgba(255,120,50,0.9)",
+                1, "rgba(230,80,50,0.9)"
               ],
               "heatmap-radius": ["interpolate", ["linear"], ["zoom"],
-                2,80, 3,65, 4,50, 5,40, 6,35, 7,30, 8,35, 9,40, 10,50, 11,60, 12,70, 13,75, 14,80
+                5, 3, 6, 4, 7, 5, 8, 6, 9, 8, 10, 10, 11, 12, 12, 14
               ],
-              "heatmap-opacity": 0.7,
+              "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 10, 0.9, 12, 0.5],
+            },
+          });
+
+          // Circle layer for individual points when zoomed in
+          mapInstance.addLayer({
+            id: "odor-points-layer", type: "circle", source: "odor-source", minzoom: 9,
+            paint: {
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 3, 12, 6, 14, 10],
+              "circle-color": [
+                "interpolate", ["linear"], ["coalesce", ["get", "intensity"], 1],
+                0, "#3b82f6", 2, "#22c55e", 4, "#eab308", 6, "#f97316", 8, "#ef4444"
+              ],
+              "circle-stroke-color": "#ffffff",
+              "circle-stroke-width": 1,
+              "circle-opacity": ["interpolate", ["linear"], ["zoom"], 9, 0.3, 11, 0.8, 14, 1],
             },
           });
         } catch (err) { console.error("Error adding source/layer:", err); }
@@ -161,7 +189,7 @@
           const errorData = await response.json().catch(() => ({}));
           throw new Error(`HTTP ${response.status}: ${errorData.error || response.statusText}`);
         }
-        const geoJsonData = await response.json();
+        const geoJsonData = filterBadPoints(await response.json());
         cacheData(geoJsonData);
         if (mapInstance && mapInstance.isStyleLoaded() && mapInstance.getSource("odor-source")) {
           mapInstance.getSource("odor-source").setData(geoJsonData || { type: "FeatureCollection", features: [] });
@@ -185,7 +213,7 @@
     function boot() {
       showLoadingScreen();
       const cachedData = getCachedData();
-      if (cachedData) initializeMap(cachedData);
+      if (cachedData) initializeMap(filterBadPoints(cachedData));
       fetchAndUpdateData();
       setInterval(fetchAndUpdateData, REFRESH_INTERVAL_MS);
     }
