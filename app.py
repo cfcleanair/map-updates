@@ -1,3 +1,12 @@
+"""Flask service that serves odor and waste report heatmaps as GeoJSON.
+
+Fetches crowdsourced reports from a Google Sheets backend, processes them into
+intensity-weighted point features (with optional time-based decay and random
+coordinate jitter), and exposes them through cached HTTP endpoints. A background
+scheduler refreshes the latest snapshot once per minute so the public `/odor`
+endpoint stays responsive without blocking on a remote sheet read.
+"""
+
 from flask import Flask, jsonify, Response, request
 from flask_cors import CORS
 from flask_caching import Cache
@@ -41,16 +50,27 @@ REQUIRED_COLUMNS = [
 FIRST_REPORT_DATE = datetime(2024, 4, 4, tzinfo=tz.gettz('Asia/Jerusalem'))
 
 class CustomJSONEncoder(json.JSONEncoder):
+    """JSON encoder that serializes datetime, time, and timedelta values.
+
+    Extends the standard library encoder so that response payloads containing
+    datetime-like objects can be dumped to JSON without raising TypeError.
     """
-    Custom JSON encoder for datetime and timedelta objects.
-    
-    Parameters:
-        obj (Any): Object to encode
-        
-    Returns:
-        str: ISO format string representation of the object
-    """
+
     def default(self, obj: Any) -> str:
+        """Convert datetime, time, and timedelta objects into JSON-safe strings.
+
+        Args:
+            obj (Any): Object that the base encoder did not know how to handle.
+
+        Returns:
+            str: ISO 8601 string for ``datetime``/``time`` values, ``str(obj)``
+            for ``timedelta`` values, or the base encoder's fallback for any
+            other type.
+
+        Raises:
+            TypeError: Propagated from ``super().default`` when ``obj`` is not a
+                supported type.
+        """
         if isinstance(obj, (datetime, time)):
             return obj.isoformat()
         elif isinstance(obj, timedelta):
@@ -58,14 +78,17 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 def gzip_response(data: Dict[str, Any]) -> Response:
-    """
-    Create a gzipped HTTP response with proper headers.
-    
-    Parameters:
-        data (Dict[str, Any]): Dictionary to be JSON-encoded and compressed
-        
+    """Encode a payload as JSON and return it gzipped with caching headers.
+
+    Args:
+        data (Dict[str, Any]): Mapping that will be serialized with
+            ``CustomJSONEncoder`` before being gzipped.
+
     Returns:
-        Response: Flask Response object with gzipped content and appropriate headers
+        Response: Flask response carrying the gzipped JSON body together with
+        CORS, ``Content-Encoding: gzip``, ``Cache-Control``, and (when
+        ``last_update_time`` is populated) ``Last-Modified`` and
+        ``X-Data-Last-Update`` headers.
     """
     gzip_buffer = gzip.compress(json.dumps(data, cls=CustomJSONEncoder).encode('utf-8'))
     headers = {
@@ -79,14 +102,18 @@ def gzip_response(data: Dict[str, Any]) -> Response:
     return Response(gzip_buffer, mimetype='application/json', headers=headers)
 
 def get_google_credentials() -> service_account.Credentials:
-    """
-    Retrieve Google service account credentials from environment variables.
-    
+    """Build Google service-account credentials from the ``GOOGLE_CREDENTIALS`` env var.
+
+    Args:
+        None.
+
     Returns:
-        service_account.Credentials: Google service account credentials object
-        
+        service_account.Credentials: Credentials scoped for Google Sheets and
+        Drive access, constructed from the JSON blob stored in the
+        ``GOOGLE_CREDENTIALS`` environment variable.
+
     Raises:
-        ValueError: If GOOGLE_CREDENTIALS environment variable is not set
+        ValueError: If ``GOOGLE_CREDENTIALS`` is unset or empty.
     """
     credentials_json = os.getenv('GOOGLE_CREDENTIALS')
     if not credentials_json:
@@ -99,18 +126,29 @@ def get_google_credentials() -> service_account.Credentials:
     )
 
 def process_raw_dataframe(df: pd.DataFrame, reference_time: Optional[datetime] = None) -> pd.DataFrame:
-    """
-    Process and clean the raw dataframe from Google Sheets.
-    
-    Parameters:
-        df (pd.DataFrame): Raw DataFrame containing odor reports
-        reference_time (Optional[datetime]): Timestamp to use for calculations, defaults to current time
-        
+    """Clean the raw Google Sheets dataframe and compute report ages.
+
+    Validates that every column in ``REQUIRED_COLUMNS`` is present, drops rows
+    flagged as test or spam submissions, removes entries with unusable
+    coordinates, parses the date and time columns into a Jerusalem-localized
+    ``datetime``, and finally computes ``time_elapsed_minutes`` relative to
+    ``reference_time``.
+
+    Args:
+        df (pd.DataFrame): Raw frame as returned by
+            ``gspread_dataframe.get_as_dataframe``.
+        reference_time (Optional[datetime]): Reference point for the elapsed
+            time calculation. Naive datetimes are treated as Asia/Jerusalem;
+            ``None`` (the default) uses the current time in that zone.
+
     Returns:
-        pd.DataFrame: Cleaned DataFrame with processed datetime and elapsed time calculations
-        
+        pd.DataFrame: Filtered frame retaining the original required columns
+        (minus ``בדיקה`` and ``ספאם``) plus ``datetime`` and
+        ``time_elapsed_minutes`` (clipped to be non-negative).
+
     Raises:
-        ValueError: If required columns are missing from the DataFrame
+        ValueError: If any column listed in ``REQUIRED_COLUMNS`` is missing
+            from ``df``.
     """
     missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     if missing_columns:
@@ -146,26 +184,34 @@ def process_raw_dataframe(df: pd.DataFrame, reference_time: Optional[datetime] =
     return df
 
 def calculate_decay_rate(initial_intensity: float) -> float:
-    """
-    Calculate decay rate based on initial intensity.
-    
-    Parameters:
-        initial_intensity (float): Initial odor intensity value
-        
+    """Return the per-minute linear decay rate for a given starting intensity.
+
+    The model assumes a report decays linearly to zero over 100 minutes, so the
+    rate is simply ``initial_intensity / 100``. A zero starting intensity
+    short-circuits to ``0`` to avoid division-style ambiguity downstream.
+
+    Args:
+        initial_intensity (float): Reported odor intensity at the time of
+            submission.
+
     Returns:
-        float: Calculated decay rate per minute
+        float: Decay rate expressed in intensity units per minute.
     """
     return initial_intensity / 100 if initial_intensity != 0 else 0
 
 def calculate_intensity(row: pd.Series) -> float:
-    """
-    Calculate current intensity based on elapsed time and initial intensity.
-    
-    Parameters:
-        row (pd.Series): DataFrame row containing time_elapsed_minutes and initial intensity
-        
+    """Compute the current intensity for a report after linear decay.
+
+    Reports older than 100 minutes are treated as fully decayed and return
+    zero; otherwise the intensity is decreased by ``decay_rate * time_elapsed``
+    and clamped to be non-negative.
+
+    Args:
+        row (pd.Series): Row that must expose ``time_elapsed_minutes`` and the
+            Hebrew ``עוצמת הריח`` (initial intensity) field.
+
     Returns:
-        float: Current intensity value after decay calculation
+        float: Decayed intensity rounded to two decimal places.
     """
     if row['time_elapsed_minutes'] > 100:
         return 0.0
@@ -177,14 +223,19 @@ def calculate_intensity(row: pd.Series) -> float:
     return round(current_intensity, 2)
 
 def split_coordinates(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Split coordinate string into separate latitude and longitude columns.
-    
-    Parameters:
-        df (pd.DataFrame): DataFrame containing coordinate strings
-        
+    """Parse the ``קואורדינטות`` ``"lat,lon"`` strings into numeric columns.
+
+    Filters rows whose coordinate string does not match a basic ``lat,lon``
+    pattern, then splits the remaining values into numeric ``lat`` and ``lon``
+    columns. Rows that fail numeric conversion are dropped.
+
+    Args:
+        df (pd.DataFrame): Frame containing a ``קואורדינטות`` column with
+            comma-separated coordinate strings.
+
     Returns:
-        pd.DataFrame: DataFrame with separated lat/lon columns
+        pd.DataFrame: Copy of ``df`` with valid rows only, augmented with
+        ``lat`` and ``lon`` float columns.
     """
     df = df[df['קואורדינטות'].str.match(r'^-?\d+\.?\d*,-?\d+\.?\d*$', na=False)].copy()
     coords_split = df['קואורדינטות'].str.split(',', expand=True)
@@ -193,14 +244,19 @@ def split_coordinates(df: pd.DataFrame) -> pd.DataFrame:
     return df[df['lat'].notna() & df['lon'].notna()].copy()
 
 def randomize_coordinates(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Add random offset to coordinates within a 300m radius.
-    
-    Parameters:
-        df (pd.DataFrame): DataFrame containing lat/lon coordinates
-        
+    """Jitter ``lat``/``lon`` values by up to 300 metres on the WGS84 ellipsoid.
+
+    For each row a random bearing and distance (0–300 m) are sampled and the
+    coordinate is displaced accordingly, providing privacy for reporters while
+    preserving the rough geographic distribution of the incidents.
+
+    Args:
+        df (pd.DataFrame): Frame with numeric ``lat`` and ``lon`` columns in
+            degrees.
+
     Returns:
-        pd.DataFrame: DataFrame with randomized coordinates
+        pd.DataFrame: The same frame mutated in place with the displaced
+        coordinates assigned back to ``lat`` and ``lon``.
     """
     earth_radius = 6378137
     max_distance = 300
@@ -222,14 +278,18 @@ def randomize_coordinates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def create_geojson_no_buffer(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
-    """
-    Convert GeoDataFrame to GeoJSON format.
-    
-    Parameters:
-        gdf (gpd.GeoDataFrame): GeoDataFrame containing point geometries and properties
-        
+    """Convert a ``GeoDataFrame`` into a GeoJSON ``FeatureCollection`` dictionary.
+
+    NaN values are normalised to ``None`` so the resulting JSON is valid, and
+    each non-geometry column is emitted as a feature property.
+
+    Args:
+        gdf (gpd.GeoDataFrame): Frame whose ``geometry`` column holds the
+            feature geometries; all other columns become ``properties``.
+
     Returns:
-        Dict[str, Any]: GeoJSON compatible dictionary
+        Dict[str, Any]: GeoJSON-compatible dictionary with ``type`` set to
+        ``"FeatureCollection"`` and one ``Feature`` per input row.
     """
     gdf = gdf.replace({np.nan: None})
     features: List[Dict[str, Any]] = []
@@ -249,17 +309,27 @@ def create_geojson_no_buffer(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
     }
 
 def generate_heatmap_for_timestamp(timestamp: datetime) -> Dict[str, Any]:
-    """
-    Generate heatmap data for a specific timestamp.
-    
-    Parameters:
-        timestamp (datetime): Reference time for calculating odor intensities
-        
+    """Build a decayed heatmap GeoJSON snapshot relative to ``timestamp``.
+
+    Pulls the full Google Sheet, splits odor reports from waste reports
+    (keeping only waste rows with visible smoke), normalises waste intensities
+    to ``6``, applies linear decay to both groups, jitters odor coordinates,
+    and packages the surviving points into a GeoJSON ``FeatureCollection``
+    sorted by submission time.
+
+    Args:
+        timestamp (datetime): Reference time used by ``process_raw_dataframe``
+            when computing how stale each report is.
+
     Returns:
-        Dict[str, Any]: GeoJSON compatible dictionary containing heatmap data
-        
+        Dict[str, Any]: GeoJSON ``FeatureCollection`` containing every report
+        whose decayed intensity is still positive.
+
     Raises:
-        Exception: If there's an error accessing or processing the data
+        ValueError: Propagated from ``get_google_credentials`` or
+            ``process_raw_dataframe`` when configuration or data is invalid.
+        Exception: Propagated network or gspread errors when the sheet cannot
+            be read.
     """
     creds = get_google_credentials()
     gc = gspread.authorize(creds)
@@ -299,12 +369,19 @@ def generate_heatmap_for_timestamp(timestamp: datetime) -> Dict[str, Any]:
     return create_geojson_no_buffer(combined_gdf)
 
 def update_data() -> None:
-    """
-    Fetch and process latest odor reports, updating global state.
-    
-    Updates:
-        latest_odor_geojson (Dict[str, Any]): Latest processed GeoJSON data
-        last_update_time (datetime): Timestamp of last successful update
+    """Refresh the cached odor snapshot and invalidate downstream caches.
+
+    Regenerates ``latest_odor_geojson`` for the current Jerusalem time, records
+    ``last_update_time``, and evicts the ``odor_data`` cache entry so the next
+    request reflects the fresh data. Any exception is caught and logged; the
+    previous snapshot is left untouched so the service keeps serving stale but
+    valid data.
+
+    Args:
+        None.
+
+    Returns:
+        None.
     """
     global latest_odor_geojson, last_update_time
     try:
@@ -318,30 +395,40 @@ def update_data() -> None:
         print(traceback.format_exc())
 
 def calculate_intensity_no_decay(intensity: float) -> float:
-    """
-    Calculate intensity without applying decay over time.
-    
-    Parameters:
-        intensity (float): Initial intensity value
-        
+    """Return the input intensity unchanged, rounded to two decimal places.
+
+    Used by the time-range endpoint where historical reports should not fade
+    with elapsed time.
+
+    Args:
+        intensity (float): Reported odor intensity.
+
     Returns:
-        float: Original intensity value, rounded to 2 decimal places
+        float: ``intensity`` cast to ``float`` and rounded to two decimals.
     """
     return round(float(intensity), 2)
 
 def generate_heatmap_for_timerange(start_time: datetime, end_time: datetime) -> Dict[str, Any]:
-    """
-    Generate heatmap data for a specific time range without decay.
-    
-    Parameters:
-        start_time (datetime): Start of the time range
-        end_time (datetime): End of the time range
-        
+    """Build a non-decayed heatmap GeoJSON snapshot for ``[start_time, end_time]``.
+
+    Identical pipeline to :func:`generate_heatmap_for_timestamp` except that
+    intensities are preserved at their original value (no time decay) and the
+    raw dataframe is filtered to the requested window before processing. Naive
+    inputs are interpreted as Asia/Jerusalem.
+
+    Args:
+        start_time (datetime): Inclusive lower bound of the report window.
+        end_time (datetime): Inclusive upper bound of the report window.
+
     Returns:
-        Dict[str, Any]: GeoJSON compatible dictionary containing heatmap data
-        
+        Dict[str, Any]: GeoJSON ``FeatureCollection`` covering every valid
+        report whose timestamp falls within the requested window.
+
     Raises:
-        Exception: If there's an error accessing or processing the data
+        ValueError: Propagated from ``get_google_credentials`` or
+            ``process_raw_dataframe`` when configuration or data is invalid.
+        Exception: Propagated network or gspread errors when the sheet cannot
+            be read.
     """
     israel_tz = tz.gettz('Asia/Jerusalem')
     if start_time.tzinfo is None:
@@ -388,11 +475,15 @@ def generate_heatmap_for_timerange(start_time: datetime, end_time: datetime) -> 
 
 @app.route('/')
 def home() -> Dict[str, Any]:
-    """
-    Serve home endpoint with API status.
-    
+    """Serve a JSON description of the running service and its endpoints.
+
+    Args:
+        None.
+
     Returns:
-        Dict[str, Any]: Dictionary containing API status and available endpoints
+        Dict[str, Any]: Flask JSON response with the keys ``status``,
+        ``last_update`` (ISO string or ``None``), and ``endpoints`` (a map of
+        the public routes exposed by this service).
     """
     return jsonify({
         "status": "running",
@@ -409,11 +500,18 @@ def home() -> Dict[str, Any]:
 @app.route('/odor/archive')
 @cache.cached(timeout=300)
 def serve_archive_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
-    """
-    Serve complete archive of all odor data as GeoJSON.
-    
+    """Serve the full archive of reports from ``FIRST_REPORT_DATE`` to tomorrow.
+
+    Cached for five minutes by Flask-Caching to amortise the cost of pulling
+    the entire sheet.
+
+    Args:
+        None.
+
     Returns:
-        Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON Response or error tuple
+        Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON
+        ``Response`` on success, or a ``(json_error, 500)`` tuple if the
+        underlying heatmap generation fails.
     """
     try:
         archive_geojson = generate_heatmap_for_timerange(FIRST_REPORT_DATE, datetime.now(tz.gettz('Asia/Jerusalem')) + timedelta(days=1))
@@ -423,11 +521,19 @@ def serve_archive_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
 
 @app.route('/odor')
 def serve_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
-    """
-    Serve latest odor data as GeoJSON.
-    
+    """Serve the latest cached odor snapshot, refreshing it if stale.
+
+    Triggers :func:`update_data` synchronously when the cached snapshot is
+    older than 75 seconds (or absent) so the response always reflects fresh
+    data when the background scheduler has fallen behind.
+
+    Args:
+        None.
+
     Returns:
-        Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON Response or error tuple
+        Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON
+        ``Response`` on success, or a ``({"error": ...}, 503)`` tuple when no
+        snapshot is available yet.
     """
     israel_tz = tz.gettz('Asia/Jerusalem')
     now_il = datetime.now(israel_tz)
@@ -440,18 +546,27 @@ def serve_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
 
 @app.route('/odor/historical')
 def serve_historical_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
-    """
-    Serve odor data as GeoJSON for a specific timestamp.
-    
-    Parameters:
-        timestamp (str): ISO format timestamp from query parameter
-        
+    """Serve a decayed heatmap snapshot for a single user-supplied timestamp.
+
+    Reads the ISO 8601 ``timestamp`` query string parameter and delegates to
+    :func:`generate_heatmap_for_timestamp`. Validation and processing errors
+    are caught and reported as JSON.
+
+    Args:
+        None. The ``timestamp`` query parameter is read from
+        ``flask.request.args`` rather than the function signature.
+
     Returns:
-        Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON Response or error tuple
-        
+        Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON
+        ``Response`` on success, or a ``({"error": ...}, status)`` tuple with
+        ``400`` for missing/invalid timestamps and ``500`` for processing
+        failures.
+
     Raises:
-        ValueError: If timestamp format is invalid
-        Exception: If there's an error processing the request
+        ValueError: Caught internally and surfaced as a ``400`` JSON error
+            when ``timestamp`` cannot be parsed.
+        Exception: Caught internally and surfaced as a ``500`` JSON error for
+            unexpected downstream failures.
     """
     timestamp_str = request.args.get('timestamp')
     if not timestamp_str:
@@ -467,19 +582,27 @@ def serve_historical_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int
 
 @app.route('/odor/timerange')
 def serve_timerange_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
-    """
-    Serve odor data as GeoJSON for a specific time range.
-    
-    Parameters:
-        start_time (str): ISO format start time from query parameter
-        end_time (str): ISO format end time from query parameter
-        
+    """Serve a non-decayed heatmap snapshot for a user-supplied time window.
+
+    Reads the ISO 8601 ``start_time`` and ``end_time`` query parameters,
+    strips any spurious ``?...`` suffix appended by some clients, and
+    delegates to :func:`generate_heatmap_for_timerange`.
+
+    Args:
+        None. ``start_time`` and ``end_time`` are read from
+        ``flask.request.args`` rather than the function signature.
+
     Returns:
-        Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON Response or error tuple
-        
+        Union[Response, Tuple[Dict[str, str], int]]: Gzipped GeoJSON
+        ``Response`` on success, or a ``({"error": ...}, status)`` tuple with
+        ``400`` for missing/invalid input (including reversed ranges) and
+        ``500`` for processing failures.
+
     Raises:
-        ValueError: If timestamp formats are invalid or start_time is after end_time
-        Exception: If there's an error processing the request
+        ValueError: Caught internally and surfaced as a ``400`` JSON error
+            when either timestamp cannot be parsed.
+        Exception: Caught internally and surfaced as a ``500`` JSON error for
+            unexpected downstream failures.
     """
     start_time_str = request.args.get('start_time')
     end_time_str = request.args.get('end_time')
@@ -501,11 +624,15 @@ def serve_timerange_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]
 
 @app.route('/status')
 def server_status() -> Dict[str, Any]:
-    """
-    Serve server status information.
-    
+    """Serve a lightweight health/status payload for monitoring.
+
+    Args:
+        None.
+
     Returns:
-        Dict[str, Any]: Dictionary containing current server status details
+        Dict[str, Any]: Flask JSON response containing ``status``,
+        ``last_update`` (ISO 8601 or ``None``), and ``has_odor_data`` (whether
+        a cached snapshot is currently available).
     """
     return jsonify({
         "status": "running",
@@ -514,28 +641,38 @@ def server_status() -> Dict[str, Any]:
     })
 
 def run_schedule() -> None:
-    """
-    Run scheduler loop to update data periodically.
-    
-    Note:
-        This function runs indefinitely in a separate thread
-        and updates the data every minute
+    """Drive the ``schedule`` library's run loop until the process exits.
+
+    Intended to be run inside a daemon thread spawned by
+    :func:`initialize_app`; ticks once per second so any due jobs (currently
+    only the per-minute :func:`update_data` call) fire close to their target
+    time.
+
+    Args:
+        None.
+
+    Returns:
+        None. The function loops forever.
     """
     while True:
         schedule.run_pending()
         time_module.sleep(1)
 
 def initialize_app() -> None:
-    """
-    Initialize the application and start scheduler.
-    
-    Note:
-        - Performs initial data update
-        - Sets up minute-by-minute scheduler
-        - Starts scheduler in daemon thread
-        
-    Raises:
-        Exception: If initialization fails
+    """Warm the cache and start the background scheduler thread.
+
+    Calls :func:`update_data` once at import time so the first request is
+    served from a populated cache, registers ``update_data`` to run every
+    minute via the ``schedule`` library, and starts :func:`run_schedule` in a
+    daemon thread so it does not block process shutdown. Any exception is
+    caught and logged with a traceback so a transient sheet failure on boot
+    does not crash the application.
+
+    Args:
+        None.
+
+    Returns:
+        None.
     """
     try:
         update_data()
