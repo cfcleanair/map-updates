@@ -14,6 +14,7 @@ import gzip
 import schedule
 import threading
 import time as time_module
+import traceback
 from google.oauth2 import service_account
 import pandas as pd
 import geopandas as gpd
@@ -48,6 +49,8 @@ REQUIRED_COLUMNS = [
     'תסמינים רפואיים'
 ]
 FIRST_REPORT_DATE = datetime(2024, 4, 4, tzinfo=tz.gettz('Asia/Jerusalem'))
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1PMm_4Xkrv4Bmy7p9pI8Smnqzl12xgBVotYBEb2O45cg"
+WORKSHEET_NAME = 'Sheet1'
 
 class CustomJSONEncoder(json.JSONEncoder):
     """JSON encoder that serializes datetime, time, and timedelta values.
@@ -333,9 +336,8 @@ def generate_heatmap_for_timestamp(timestamp: datetime) -> Dict[str, Any]:
     """
     creds = get_google_credentials()
     gc = gspread.authorize(creds)
-    sheet_url = "https://docs.google.com/spreadsheets/d/1PMm_4Xkrv4Bmy7p9pI8Smnqzl12xgBVotYBEb2O45cg"
-    spreadsheet = gc.open_by_url(sheet_url)
-    worksheet = spreadsheet.worksheet('Sheet1')
+    spreadsheet = gc.open_by_url(SHEET_URL)
+    worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
     df_original = process_raw_dataframe(get_as_dataframe(worksheet), timestamp)
     odor_df = df_original[df_original['סוג דיווח'] == 'מפגע ריח'].copy()
     waste_df = df_original[df_original['סוג דיווח'] == 'מפגע פסולת'].copy()
@@ -391,7 +393,6 @@ def update_data() -> None:
     except Exception as e:
         print(f"[{datetime.now()}] ERROR updating data: {str(e)}")
         print("Error details:", e.__class__.__name__)
-        import traceback
         print(traceback.format_exc())
 
 def calculate_intensity_no_decay(intensity: float) -> float:
@@ -437,9 +438,8 @@ def generate_heatmap_for_timerange(start_time: datetime, end_time: datetime) -> 
         end_time = end_time.replace(tzinfo=israel_tz)
     creds = get_google_credentials()
     gc = gspread.authorize(creds)
-    sheet_url = "https://docs.google.com/spreadsheets/d/1PMm_4Xkrv4Bmy7p9pI8Smnqzl12xgBVotYBEb2O45cg"
-    spreadsheet = gc.open_by_url(sheet_url)
-    worksheet = spreadsheet.worksheet('Sheet1')
+    spreadsheet = gc.open_by_url(SHEET_URL)
+    worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
     df = process_raw_dataframe(get_as_dataframe(worksheet))
     df = df[(df['datetime'] >= start_time) & (df['datetime'] <= end_time)]
     odor_df = df[df['סוג דיווח'] == 'מפגע ריח'].copy()
@@ -682,7 +682,6 @@ def initialize_app() -> None:
         scheduler_thread.start()
     except Exception as e:
         print(f"Error during initialization: {str(e)}")
-        import traceback
         print(traceback.format_exc())
 
 initialize_app()
