@@ -15,8 +15,10 @@ map-updates/
 ├── .env.example               # documents GOOGLE_CREDENTIALS + PORT
 ├── README.md                  # what it does, URLs, env vars, run/test/deploy
 ├── STRUCTURE.md               # this file
-├── tests/                     # pytest characterization suite (pytest)
-│   └── test_heatmap.py        # exact-output tests for the heatmap generators
+├── conftest.py                # pytest bootstrap: puts repo root on sys.path (test-only, deploy-inert)
+├── tests/                     # pytest characterization suite
+│   ├── test_heatmap.py        # exact-output tests for the heatmap generators
+│   └── fixtures/              # golden GeoJSON snapshots asserted against
 ├── public/                    # SEPARATE deploy target — GitHub Pages
 │   └── index.html             # MapLibre frontend; DATA_URL points at the Railway backend
 └── .github/
