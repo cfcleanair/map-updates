@@ -72,16 +72,40 @@ def build_reports_df():
 
     # (date, time, type, coords, intensity, smoke, test, spam, nature, burned, symptoms)
     rows = [
-        ("10/07/2026", "12:00:00", odor,  "32.05,34.75", 8,  nan,       0, 0, "a", "b", "c"),
-        ("10/07/2026", "12:05:00", odor,  "32.06,34.76", 5,  nan,       0, 0, "a", "b", "c"),
-        ("10/07/2026", "12:10:00", odor,  "32.07,34.77", 10, nan,       0, 0, "a", "b", "c"),
-        ("10/07/2026", "12:15:00", waste, "32.08,34.78", 3,  colors[0], 0, 0, "a", "b", "c"),
-        ("10/07/2026", "12:20:00", waste, "32.09,34.79", 3,  colors[2], 0, 0, "a", "b", "c"),
-        ("10/07/2026", "12:25:00", waste, "32.10,34.80", 3,  nan,       0, 0, "a", "b", "c"),
-        ("10/07/2026", "12:30:00", odor,  "32.11,34.81", 7,  nan,       1, 0, "a", "b", "c"),
-        ("10/07/2026", "12:35:00", odor,  "32.12,34.82", 7,  nan,       0, 1, "a", "b", "c"),
-        ("10/07/2026", "12:40:00", odor,  loc_nf,        7,  nan,       0, 0, "a", "b", "c"),
-        ("10/07/2026", "12:45:00", odor,  "abc",         7,  nan,       0, 0, "a", "b", "c"),
+        ("10/07/2026", "12:00:00", odor, "32.05,34.75", 8, nan, 0, 0, "a", "b", "c"),
+        ("10/07/2026", "12:05:00", odor, "32.06,34.76", 5, nan, 0, 0, "a", "b", "c"),
+        ("10/07/2026", "12:10:00", odor, "32.07,34.77", 10, nan, 0, 0, "a", "b", "c"),
+        (
+            "10/07/2026",
+            "12:15:00",
+            waste,
+            "32.08,34.78",
+            3,
+            colors[0],
+            0,
+            0,
+            "a",
+            "b",
+            "c",
+        ),
+        (
+            "10/07/2026",
+            "12:20:00",
+            waste,
+            "32.09,34.79",
+            3,
+            colors[2],
+            0,
+            0,
+            "a",
+            "b",
+            "c",
+        ),
+        ("10/07/2026", "12:25:00", waste, "32.10,34.80", 3, nan, 0, 0, "a", "b", "c"),
+        ("10/07/2026", "12:30:00", odor, "32.11,34.81", 7, nan, 1, 0, "a", "b", "c"),
+        ("10/07/2026", "12:35:00", odor, "32.12,34.82", 7, nan, 0, 1, "a", "b", "c"),
+        ("10/07/2026", "12:40:00", odor, loc_nf, 7, nan, 0, 0, "a", "b", "c"),
+        ("10/07/2026", "12:45:00", odor, "abc", 7, nan, 0, 0, "a", "b", "c"),
     ]
     return pd.DataFrame(rows, columns=cols)
 
@@ -175,7 +199,9 @@ def _check(output, name):
     path = FIXTURES / f"{name}.json"
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
+        path.write_text(
+            json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         pytest.skip(f"wrote golden snapshot {name}")
     golden = json.loads(path.read_text(encoding="utf-8"))
     assert output == golden

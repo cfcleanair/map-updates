@@ -72,6 +72,7 @@ class CustomJSONEncoder(json.JSONEncoder):
             return str(obj)
         return super().default(obj)
 
+
 def gzip_response(data: Dict[str, Any]) -> Response:
     """Encode a payload as JSON and return it gzipped with caching headers.
 
@@ -89,12 +90,15 @@ def gzip_response(data: Dict[str, Any]) -> Response:
     headers = {
         'Access-Control-Allow-Origin': '*',
         'Content-Encoding': 'gzip',
-        'Cache-Control': 'public, max-age=60'
+        'Cache-Control': 'public, max-age=60',
     }
     if last_update_time:
-        headers['Last-Modified'] = last_update_time.astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        headers['Last-Modified'] = last_update_time.astimezone(timezone.utc).strftime(
+            "%a, %d %b %Y %H:%M:%S GMT"
+        )
         headers['X-Data-Last-Update'] = last_update_time.isoformat()
     return Response(gzip_buffer, mimetype='application/json', headers=headers)
+
 
 def get_google_credentials() -> service_account.Credentials:
     """Build Google service-account credentials from the ``GOOGLE_CREDENTIALS`` env var.
@@ -113,14 +117,20 @@ def get_google_credentials() -> service_account.Credentials:
     credentials_json = get_google_credentials_json()
     if not credentials_json:
         raise ValueError("GOOGLE_CREDENTIALS environment variable not set")
-    
+
     credentials_info = json.loads(credentials_json)
     return service_account.Credentials.from_service_account_info(
         credentials_info,
-        scopes=['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        scopes=[
+            'https://spreadsheets.google.com/feeds',
+            'https://www.googleapis.com/auth/drive',
+        ],
     )
 
-def process_raw_dataframe(df: pd.DataFrame, reference_time: Optional[datetime] = None) -> pd.DataFrame:
+
+def process_raw_dataframe(
+    df: pd.DataFrame, reference_time: Optional[datetime] = None
+) -> pd.DataFrame:
     """Clean the raw Google Sheets dataframe and compute report ages.
 
     Validates that every column in ``REQUIRED_COLUMNS`` is present, drops rows
@@ -148,35 +158,43 @@ def process_raw_dataframe(df: pd.DataFrame, reference_time: Optional[datetime] =
     missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     if missing_columns:
         raise ValueError(f"Missing columns: {missing_columns}")
-    
+
     israel_tz = tz.gettz('Asia/Jerusalem')
     df = df[REQUIRED_COLUMNS].copy()
     df = df[(df['בדיקה'].fillna(0) != 1) & (df['ספאם'].fillna(0) != 1)]
     df = df.drop(columns=['בדיקה', 'ספאם'])
-    df = df[df['קואורדינטות'].notna() & ~df['קואורדינטות'].astype(str).str.contains('המיקום לא נמצא', na=False)]
-    
+    df = df[
+        df['קואורדינטות'].notna()
+        & ~df['קואורדינטות'].astype(str).str.contains('המיקום לא נמצא', na=False)
+    ]
+
     df['datetime'] = pd.to_datetime(
         df['תאריך שליחת הדיווח'].astype(str) + ' ' + df['שעת שליחת הדיווח'].astype(str),
         format='%d/%m/%Y %H:%M:%S',
-        errors='coerce'
+        errors='coerce',
     ).dt.tz_localize(None)
-    
+
     try:
-        df['datetime'] = df['datetime'].dt.tz_localize('Asia/Jerusalem', ambiguous=True, nonexistent='shift_forward')
+        df['datetime'] = df['datetime'].dt.tz_localize(
+            'Asia/Jerusalem', ambiguous=True, nonexistent='shift_forward'
+        )
     except Exception as e:
         print(f"Warning: Time localization error: {str(e)}")
-    
+
     df = df[df['datetime'].notna()]
-    
+
     if reference_time is None:
         reference_time = datetime.now(timezone.utc).astimezone(israel_tz)
     elif reference_time.tzinfo is None:
         reference_time = reference_time.replace(tzinfo=israel_tz)
-    
-    df['time_elapsed_minutes'] = (reference_time - df['datetime']).dt.total_seconds() / 60
+
+    df['time_elapsed_minutes'] = (
+        reference_time - df['datetime']
+    ).dt.total_seconds() / 60
     df['time_elapsed_minutes'] = df['time_elapsed_minutes'].clip(lower=0)
-    
+
     return df
+
 
 def calculate_decay_rate(initial_intensity: float) -> float:
     """Return the per-minute linear decay rate for a given starting intensity.
@@ -194,6 +212,7 @@ def calculate_decay_rate(initial_intensity: float) -> float:
     """
     return initial_intensity / 100 if initial_intensity != 0 else 0
 
+
 def calculate_intensity(row: pd.Series) -> float:
     """Compute the current intensity for a report after linear decay.
 
@@ -210,12 +229,13 @@ def calculate_intensity(row: pd.Series) -> float:
     """
     if row['time_elapsed_minutes'] > 100:
         return 0.0
-    
+
     initial_intensity = float(row['עוצמת הריח'])
     time_elapsed = float(row['time_elapsed_minutes'])
     decay_rate = calculate_decay_rate(initial_intensity)
     current_intensity = max(0, initial_intensity - (decay_rate * time_elapsed))
     return round(current_intensity, 2)
+
 
 def split_coordinates(df: pd.DataFrame) -> pd.DataFrame:
     """Parse the ``קואורדינטות`` ``"lat,lon"`` strings into numeric columns.
@@ -237,6 +257,7 @@ def split_coordinates(df: pd.DataFrame) -> pd.DataFrame:
     df.loc[:, 'lat'] = pd.to_numeric(coords_split[0], errors='coerce')
     df.loc[:, 'lon'] = pd.to_numeric(coords_split[1], errors='coerce')
     return df[df['lat'].notna() & df['lon'].notna()].copy()
+
 
 def randomize_coordinates(df: pd.DataFrame) -> pd.DataFrame:
     """Jitter ``lat``/``lon`` values by up to 300 metres on the WGS84 ellipsoid.
@@ -261,16 +282,21 @@ def randomize_coordinates(df: pd.DataFrame) -> pd.DataFrame:
     lat_rad = np.deg2rad(df['lat'].values)
     lon_rad = np.deg2rad(df['lon'].values)
     new_lat_rad = np.arcsin(
-        np.sin(lat_rad) * np.cos(random_distances / earth_radius) +
-        np.cos(lat_rad) * np.sin(random_distances / earth_radius) * np.cos(random_bearings_rad)
+        np.sin(lat_rad) * np.cos(random_distances / earth_radius)
+        + np.cos(lat_rad)
+        * np.sin(random_distances / earth_radius)
+        * np.cos(random_bearings_rad)
     )
     new_lon_rad = lon_rad + np.arctan2(
-        np.sin(random_bearings_rad) * np.sin(random_distances / earth_radius) * np.cos(lat_rad),
-        np.cos(random_distances / earth_radius) - np.sin(lat_rad) * np.sin(new_lat_rad)
+        np.sin(random_bearings_rad)
+        * np.sin(random_distances / earth_radius)
+        * np.cos(lat_rad),
+        np.cos(random_distances / earth_radius) - np.sin(lat_rad) * np.sin(new_lat_rad),
     )
     df['lat'] = np.rad2deg(new_lat_rad)
     df['lon'] = np.rad2deg(new_lon_rad)
     return df
+
 
 def create_geojson_no_buffer(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
     """Convert a ``GeoDataFrame`` into a GeoJSON ``FeatureCollection`` dictionary.
@@ -292,20 +318,16 @@ def create_geojson_no_buffer(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
         geom = row['geometry']
         props = row.drop('geometry').to_dict()
         geom_json = mapping(geom)
-        feature = {
-            "type": "Feature",
-            "geometry": geom_json,
-            "properties": props
-        }
+        feature = {"type": "Feature", "geometry": geom_json, "properties": props}
         features.append(feature)
-    return {
-        "type": "FeatureCollection",
-        "features": features
-    }
+    return {"type": "FeatureCollection", "features": features}
 
-def _generate_heatmap(reference_time: Optional[datetime] = None,
-                      window: Optional[Tuple[datetime, datetime]] = None,
-                      decay: bool = True) -> Dict[str, Any]:
+
+def _generate_heatmap(
+    reference_time: Optional[datetime] = None,
+    window: Optional[Tuple[datetime, datetime]] = None,
+    decay: bool = True,
+) -> Dict[str, Any]:
     """Build a GeoJSON heatmap snapshot from the reports sheet.
 
     Shared engine behind the timestamp and timerange endpoints: pulls the full
@@ -345,20 +367,24 @@ def _generate_heatmap(reference_time: Optional[datetime] = None,
     waste_df = df[df['סוג דיווח'] == 'מפגע פסולת'].copy()
     valid_smoke_colors = ['לבן', 'אפור', 'שחור']
     valid_waste_df = waste_df[
-        waste_df['צבע העשן'].isin(valid_smoke_colors) &
-        waste_df['צבע העשן'].notna() &
-        (waste_df['צבע העשן'] != 'אין עשן')
+        waste_df['צבע העשן'].isin(valid_smoke_colors)
+        & waste_df['צבע העשן'].notna()
+        & (waste_df['צבע העשן'] != 'אין עשן')
     ].copy()
     valid_waste_df['עוצמת הריח'] = 6
     odor_df = split_coordinates(odor_df)
     valid_waste_df = split_coordinates(valid_waste_df)
-    odor_df['עוצמת הריח'] = pd.to_numeric(odor_df['עוצמת הריח'], errors='coerce').fillna(0)
+    odor_df['עוצמת הריח'] = pd.to_numeric(
+        odor_df['עוצמת הריח'], errors='coerce'
+    ).fillna(0)
     if decay:
         odor_df['intensity'] = odor_df.apply(calculate_intensity, axis=1)
         valid_waste_df['intensity'] = valid_waste_df.apply(calculate_intensity, axis=1)
     else:
         odor_df['intensity'] = odor_df['עוצמת הריח'].apply(calculate_intensity_no_decay)
-        valid_waste_df['intensity'] = valid_waste_df['עוצמת הריח'].apply(calculate_intensity_no_decay)
+        valid_waste_df['intensity'] = valid_waste_df['עוצמת הריח'].apply(
+            calculate_intensity_no_decay
+        )
     odor_df = randomize_coordinates(odor_df)
     combined_df = pd.concat([odor_df, valid_waste_df])
     combined_df = combined_df[combined_df['intensity'] > 0]
@@ -367,14 +393,14 @@ def _generate_heatmap(reference_time: Optional[datetime] = None,
         combined_gdf = gpd.GeoDataFrame(
             combined_df,
             geometry=gpd.points_from_xy(combined_df['lon'], combined_df['lat']),
-            crs='EPSG:4326'
+            crs='EPSG:4326',
         )
     else:
         combined_gdf = gpd.GeoDataFrame(
-            columns=combined_df.columns.tolist() + ['geometry'],
-            crs='EPSG:4326'
+            columns=combined_df.columns.tolist() + ['geometry'], crs='EPSG:4326'
         )
     return create_geojson_no_buffer(combined_gdf)
+
 
 def generate_heatmap_for_timestamp(timestamp: datetime) -> Dict[str, Any]:
     """Build a decayed heatmap GeoJSON snapshot relative to ``timestamp``.
@@ -401,6 +427,7 @@ def generate_heatmap_for_timestamp(timestamp: datetime) -> Dict[str, Any]:
     """
     return _generate_heatmap(reference_time=timestamp, decay=True)
 
+
 def update_data() -> None:
     """Refresh the cached odor snapshot and invalidate downstream caches.
 
@@ -418,13 +445,16 @@ def update_data() -> None:
     """
     global latest_odor_geojson, last_update_time
     try:
-        latest_odor_geojson = generate_heatmap_for_timestamp(datetime.now(tz.gettz('Asia/Jerusalem')))
+        latest_odor_geojson = generate_heatmap_for_timestamp(
+            datetime.now(tz.gettz('Asia/Jerusalem'))
+        )
         last_update_time = datetime.now(tz.gettz('Asia/Jerusalem'))
         cache.delete('odor_data')
     except Exception as e:
         print(f"[{datetime.now()}] ERROR updating data: {str(e)}")
         print("Error details:", e.__class__.__name__)
         print(traceback.format_exc())
+
 
 def calculate_intensity_no_decay(intensity: float) -> float:
     """Return the input intensity unchanged, rounded to two decimal places.
@@ -440,7 +470,10 @@ def calculate_intensity_no_decay(intensity: float) -> float:
     """
     return round(float(intensity), 2)
 
-def generate_heatmap_for_timerange(start_time: datetime, end_time: datetime) -> Dict[str, Any]:
+
+def generate_heatmap_for_timerange(
+    start_time: datetime, end_time: datetime
+) -> Dict[str, Any]:
     """Build a non-decayed heatmap GeoJSON snapshot for ``[start_time, end_time]``.
 
     Identical pipeline to :func:`generate_heatmap_for_timestamp` except that
@@ -469,6 +502,7 @@ def generate_heatmap_for_timerange(start_time: datetime, end_time: datetime) -> 
         end_time = end_time.replace(tzinfo=israel_tz)
     return _generate_heatmap(window=(start_time, end_time), decay=False)
 
+
 @app.route('/')
 def home() -> Dict[str, Any]:
     """Serve a JSON description of the running service and its endpoints.
@@ -481,17 +515,20 @@ def home() -> Dict[str, Any]:
         ``last_update`` (ISO string or ``None``), and ``endpoints`` (a map of
         the public routes exposed by this service).
     """
-    return jsonify({
-        "status": "running",
-        "last_update": last_update_time.isoformat() if last_update_time else None,
-        "endpoints": {
-            "odor": "/odor",
-            "odor_historical": "/odor/historical",
-            "odor_timerange": "/odor/timerange",
-            "odor_archive": "/odor/archive",
-            "status": "/status"
+    return jsonify(
+        {
+            "status": "running",
+            "last_update": last_update_time.isoformat() if last_update_time else None,
+            "endpoints": {
+                "odor": "/odor",
+                "odor_historical": "/odor/historical",
+                "odor_timerange": "/odor/timerange",
+                "odor_archive": "/odor/archive",
+                "status": "/status",
+            },
         }
-    })
+    )
+
 
 @app.route('/odor/archive')
 @cache.cached(timeout=300)
@@ -510,10 +547,14 @@ def serve_archive_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
         underlying heatmap generation fails.
     """
     try:
-        archive_geojson = generate_heatmap_for_timerange(FIRST_REPORT_DATE, datetime.now(tz.gettz('Asia/Jerusalem')) + timedelta(days=1))
+        archive_geojson = generate_heatmap_for_timerange(
+            FIRST_REPORT_DATE,
+            datetime.now(tz.gettz('Asia/Jerusalem')) + timedelta(days=1),
+        )
         return gzip_response(archive_geojson)
     except Exception as e:
         return jsonify({"error": f"Error processing request: {str(e)}"}), 500
+
 
 @app.route('/odor')
 def serve_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
@@ -533,12 +574,15 @@ def serve_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
     """
     israel_tz = tz.gettz('Asia/Jerusalem')
     now_il = datetime.now(israel_tz)
-    stale = (last_update_time is None) or ((now_il - last_update_time) > timedelta(seconds=75))
+    stale = (last_update_time is None) or (
+        (now_il - last_update_time) > timedelta(seconds=75)
+    )
     if stale:
         update_data()
     if latest_odor_geojson is None:
         return jsonify({"error": "No data available"}), 503
     return gzip_response(latest_odor_geojson)
+
 
 @app.route('/odor/historical')
 def serve_historical_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
@@ -575,6 +619,7 @@ def serve_historical_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int
         return jsonify({"error": f"Invalid timestamp format: {str(e)}"}), 400
     except Exception as e:
         return jsonify({"error": f"Error processing request: {str(e)}"}), 500
+
 
 @app.route('/odor/timerange')
 def serve_timerange_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]]:
@@ -618,6 +663,7 @@ def serve_timerange_odor_geojson() -> Union[Response, Tuple[Dict[str, str], int]
     except Exception as e:
         return jsonify({"error": f"Error processing request: {str(e)}"}), 500
 
+
 @app.route('/status')
 def server_status() -> Dict[str, Any]:
     """Serve a lightweight health/status payload for monitoring.
@@ -630,11 +676,14 @@ def server_status() -> Dict[str, Any]:
         ``last_update`` (ISO 8601 or ``None``), and ``has_odor_data`` (whether
         a cached snapshot is currently available).
     """
-    return jsonify({
-        "status": "running",
-        "last_update": last_update_time.isoformat() if last_update_time else None,
-        "has_odor_data": latest_odor_geojson is not None
-    })
+    return jsonify(
+        {
+            "status": "running",
+            "last_update": last_update_time.isoformat() if last_update_time else None,
+            "has_odor_data": latest_odor_geojson is not None,
+        }
+    )
+
 
 def run_schedule() -> None:
     """Drive the ``schedule`` library's run loop until the process exits.
@@ -653,6 +702,7 @@ def run_schedule() -> None:
     while True:
         schedule.run_pending()
         time_module.sleep(1)
+
 
 def initialize_app() -> None:
     """Warm the cache and start the background scheduler thread.
@@ -679,6 +729,7 @@ def initialize_app() -> None:
     except Exception as e:
         print(f"Error during initialization: {str(e)}")
         print(traceback.format_exc())
+
 
 initialize_app()
 

@@ -25,7 +25,7 @@ REQUIRED_COLUMNS = [
     'ספאם',
     'אופי הריח',
     'חומר נשרף משוער',
-    'תסמינים רפואיים'
+    'תסמינים רפואיים',
 ]
 FIRST_REPORT_DATE = datetime(2024, 4, 4, tzinfo=tz.gettz('Asia/Jerusalem'))
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1PMm_4Xkrv4Bmy7p9pI8Smnqzl12xgBVotYBEb2O45cg"
