@@ -1,3 +1,13 @@
 __pycache__/
-.env
+*.pyc
 .venv/
+venv/
+.idea/
+.vscode/
+.DS_Store
+*.log
+*.bak
+.pytest_cache/
+.claude/
+.env
+.env.local
