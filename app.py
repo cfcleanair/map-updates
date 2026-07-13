@@ -18,7 +18,7 @@ import traceback
 from google.oauth2 import service_account
 import pandas as pd
 import geopandas as gpd
-from shapely.geometry import mapping, Point
+from shapely.geometry import mapping
 from typing import Dict, Any, List, Union, Optional, Tuple
 import json
 from datetime import datetime, time, timedelta, timezone
@@ -26,7 +26,15 @@ from dateutil import tz
 import numpy as np
 import gspread
 from gspread_dataframe import get_as_dataframe
-import os
+
+from config import (
+    REQUIRED_COLUMNS,
+    FIRST_REPORT_DATE,
+    SHEET_URL,
+    WORKSHEET_NAME,
+    get_google_credentials_json,
+    get_port,
+)
 
 app = Flask(__name__)
 CORS(app)
@@ -35,22 +43,6 @@ cache = Cache(app, config={'CACHE_TYPE': 'simple', 'CACHE_DEFAULT_TIMEOUT': 60})
 latest_odor_geojson: Optional[Dict[str, Any]] = None
 last_update_time: Optional[datetime] = None
 
-REQUIRED_COLUMNS = [
-    'תאריך שליחת הדיווח',
-    'שעת שליחת הדיווח',
-    'סוג דיווח',
-    'קואורדינטות',
-    'עוצמת הריח',
-    'צבע העשן',
-    'בדיקה',
-    'ספאם',
-    'אופי הריח',
-    'חומר נשרף משוער',
-    'תסמינים רפואיים'
-]
-FIRST_REPORT_DATE = datetime(2024, 4, 4, tzinfo=tz.gettz('Asia/Jerusalem'))
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1PMm_4Xkrv4Bmy7p9pI8Smnqzl12xgBVotYBEb2O45cg"
-WORKSHEET_NAME = 'Sheet1'
 
 class CustomJSONEncoder(json.JSONEncoder):
     """JSON encoder that serializes datetime, time, and timedelta values.
@@ -118,7 +110,7 @@ def get_google_credentials() -> service_account.Credentials:
     Raises:
         ValueError: If ``GOOGLE_CREDENTIALS`` is unset or empty.
     """
-    credentials_json = os.getenv('GOOGLE_CREDENTIALS')
+    credentials_json = get_google_credentials_json()
     if not credentials_json:
         raise ValueError("GOOGLE_CREDENTIALS environment variable not set")
     
@@ -311,6 +303,79 @@ def create_geojson_no_buffer(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
         "features": features
     }
 
+def _generate_heatmap(reference_time: Optional[datetime] = None,
+                      window: Optional[Tuple[datetime, datetime]] = None,
+                      decay: bool = True) -> Dict[str, Any]:
+    """Build a GeoJSON heatmap snapshot from the reports sheet.
+
+    Shared engine behind the timestamp and timerange endpoints: pulls the full
+    sheet, splits odor from smoke-bearing waste reports, normalises waste
+    intensity to ``6``, computes per-report intensity (decayed or raw), jitters
+    odor coordinates, and packages the surviving points into a GeoJSON
+    ``FeatureCollection`` sorted by submission time.
+
+    Args:
+        reference_time (Optional[datetime]): Staleness reference forwarded to
+            ``process_raw_dataframe``; ``None`` means now (Asia/Jerusalem).
+        window (Optional[Tuple[datetime, datetime]]): Inclusive ``(start, end)``
+            filter on report ``datetime``; ``None`` keeps every row.
+        decay (bool): ``True`` applies linear time decay via
+            ``calculate_intensity``; ``False`` keeps raw intensity via
+            ``calculate_intensity_no_decay``.
+
+    Returns:
+        Dict[str, Any]: GeoJSON ``FeatureCollection`` of every report whose
+        intensity is still positive.
+
+    Raises:
+        ValueError: Propagated from ``get_google_credentials`` or
+            ``process_raw_dataframe`` when configuration or data is invalid.
+        Exception: Propagated network or gspread errors when the sheet cannot
+            be read.
+    """
+    creds = get_google_credentials()
+    gc = gspread.authorize(creds)
+    spreadsheet = gc.open_by_url(SHEET_URL)
+    worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+    df = process_raw_dataframe(get_as_dataframe(worksheet), reference_time)
+    if window is not None:
+        start_time, end_time = window
+        df = df[(df['datetime'] >= start_time) & (df['datetime'] <= end_time)]
+    odor_df = df[df['סוג דיווח'] == 'מפגע ריח'].copy()
+    waste_df = df[df['סוג דיווח'] == 'מפגע פסולת'].copy()
+    valid_smoke_colors = ['לבן', 'אפור', 'שחור']
+    valid_waste_df = waste_df[
+        waste_df['צבע העשן'].isin(valid_smoke_colors) &
+        waste_df['צבע העשן'].notna() &
+        (waste_df['צבע העשן'] != 'אין עשן')
+    ].copy()
+    valid_waste_df['עוצמת הריח'] = 6
+    odor_df = split_coordinates(odor_df)
+    valid_waste_df = split_coordinates(valid_waste_df)
+    odor_df['עוצמת הריח'] = pd.to_numeric(odor_df['עוצמת הריח'], errors='coerce').fillna(0)
+    if decay:
+        odor_df['intensity'] = odor_df.apply(calculate_intensity, axis=1)
+        valid_waste_df['intensity'] = valid_waste_df.apply(calculate_intensity, axis=1)
+    else:
+        odor_df['intensity'] = odor_df['עוצמת הריח'].apply(calculate_intensity_no_decay)
+        valid_waste_df['intensity'] = valid_waste_df['עוצמת הריח'].apply(calculate_intensity_no_decay)
+    odor_df = randomize_coordinates(odor_df)
+    combined_df = pd.concat([odor_df, valid_waste_df])
+    combined_df = combined_df[combined_df['intensity'] > 0]
+    if len(combined_df) > 0:
+        combined_df = combined_df.sort_values(by='datetime', ascending=True)
+        combined_gdf = gpd.GeoDataFrame(
+            combined_df,
+            geometry=gpd.points_from_xy(combined_df['lon'], combined_df['lat']),
+            crs='EPSG:4326'
+        )
+    else:
+        combined_gdf = gpd.GeoDataFrame(
+            columns=combined_df.columns.tolist() + ['geometry'],
+            crs='EPSG:4326'
+        )
+    return create_geojson_no_buffer(combined_gdf)
+
 def generate_heatmap_for_timestamp(timestamp: datetime) -> Dict[str, Any]:
     """Build a decayed heatmap GeoJSON snapshot relative to ``timestamp``.
 
@@ -334,41 +399,7 @@ def generate_heatmap_for_timestamp(timestamp: datetime) -> Dict[str, Any]:
         Exception: Propagated network or gspread errors when the sheet cannot
             be read.
     """
-    creds = get_google_credentials()
-    gc = gspread.authorize(creds)
-    spreadsheet = gc.open_by_url(SHEET_URL)
-    worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
-    df_original = process_raw_dataframe(get_as_dataframe(worksheet), timestamp)
-    odor_df = df_original[df_original['סוג דיווח'] == 'מפגע ריח'].copy()
-    waste_df = df_original[df_original['סוג דיווח'] == 'מפגע פסולת'].copy()
-    valid_smoke_colors = ['לבן', 'אפור', 'שחור']
-    valid_waste_df = waste_df[
-        waste_df['צבע העשן'].isin(valid_smoke_colors) &
-        waste_df['צבע העשן'].notna() &
-        (waste_df['צבע העשן'] != 'אין עשן')
-    ].copy()
-    valid_waste_df['עוצמת הריח'] = 6
-    odor_df = split_coordinates(odor_df)
-    valid_waste_df = split_coordinates(valid_waste_df)
-    odor_df['עוצמת הריח'] = pd.to_numeric(odor_df['עוצמת הריח'], errors='coerce').fillna(0)
-    odor_df['intensity'] = odor_df.apply(calculate_intensity, axis=1)
-    valid_waste_df['intensity'] = valid_waste_df.apply(calculate_intensity, axis=1)
-    odor_df = randomize_coordinates(odor_df)
-    combined_df = pd.concat([odor_df, valid_waste_df])
-    combined_df = combined_df[combined_df['intensity'] > 0]
-    if len(combined_df) > 0:
-        combined_df = combined_df.sort_values(by='datetime', ascending=True)
-        combined_gdf = gpd.GeoDataFrame(
-            combined_df,
-            geometry=gpd.points_from_xy(combined_df['lon'], combined_df['lat']),
-            crs='EPSG:4326'
-        )
-    else:
-        combined_gdf = gpd.GeoDataFrame(
-            columns=combined_df.columns.tolist() + ['geometry'],
-            crs='EPSG:4326'
-        )
-    return create_geojson_no_buffer(combined_gdf)
+    return _generate_heatmap(reference_time=timestamp, decay=True)
 
 def update_data() -> None:
     """Refresh the cached odor snapshot and invalidate downstream caches.
@@ -436,42 +467,7 @@ def generate_heatmap_for_timerange(start_time: datetime, end_time: datetime) -> 
         start_time = start_time.replace(tzinfo=israel_tz)
     if end_time.tzinfo is None:
         end_time = end_time.replace(tzinfo=israel_tz)
-    creds = get_google_credentials()
-    gc = gspread.authorize(creds)
-    spreadsheet = gc.open_by_url(SHEET_URL)
-    worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
-    df = process_raw_dataframe(get_as_dataframe(worksheet))
-    df = df[(df['datetime'] >= start_time) & (df['datetime'] <= end_time)]
-    odor_df = df[df['סוג דיווח'] == 'מפגע ריח'].copy()
-    waste_df = df[df['סוג דיווח'] == 'מפגע פסולת'].copy()
-    valid_smoke_colors = ['לבן', 'אפור', 'שחור']
-    valid_waste_df = waste_df[
-        waste_df['צבע העשן'].isin(valid_smoke_colors) &
-        waste_df['צבע העשן'].notna() &
-        (waste_df['צבע העשן'] != 'אין עשן')
-    ].copy()
-    valid_waste_df['עוצמת הריח'] = 6
-    odor_df = split_coordinates(odor_df)
-    valid_waste_df = split_coordinates(valid_waste_df)
-    odor_df['עוצמת הריח'] = pd.to_numeric(odor_df['עוצמת הריח'], errors='coerce').fillna(0)
-    odor_df['intensity'] = odor_df['עוצמת הריח'].apply(calculate_intensity_no_decay)
-    valid_waste_df['intensity'] = valid_waste_df['עוצמת הריח'].apply(calculate_intensity_no_decay)
-    odor_df = randomize_coordinates(odor_df)
-    combined_df = pd.concat([odor_df, valid_waste_df])
-    combined_df = combined_df[combined_df['intensity'] > 0]
-    if len(combined_df) > 0:
-        combined_df = combined_df.sort_values(by='datetime', ascending=True)
-        combined_gdf = gpd.GeoDataFrame(
-            combined_df,
-            geometry=gpd.points_from_xy(combined_df['lon'], combined_df['lat']),
-            crs='EPSG:4326'
-        )
-    else:
-        combined_gdf = gpd.GeoDataFrame(
-            columns=combined_df.columns.tolist() + ['geometry'],
-            crs='EPSG:4326'
-        )
-    return create_geojson_no_buffer(combined_gdf)
+    return _generate_heatmap(window=(start_time, end_time), decay=False)
 
 @app.route('/')
 def home() -> Dict[str, Any]:
@@ -687,5 +683,5 @@ def initialize_app() -> None:
 initialize_app()
 
 if __name__ == "__main__":
-    port = int(os.getenv('PORT', 8080))
+    port = get_port()
     app.run(host='0.0.0.0', port=port)
