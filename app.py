@@ -18,7 +18,7 @@ import traceback
 from google.oauth2 import service_account
 import pandas as pd
 import geopandas as gpd
-from shapely.geometry import mapping, Point
+from shapely.geometry import mapping
 from typing import Dict, Any, List, Union, Optional, Tuple
 import json
 from datetime import datetime, time, timedelta, timezone
