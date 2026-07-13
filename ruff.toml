@@ -1,0 +1,11 @@
+# Ruff config for map-updates (pinned to ruff 0.15.21 per environement_apps STANDARDS.md).
+# Lives in ruff.toml, NOT pyproject.toml: the Railway buildpack keys off the
+# absence of pyproject.toml, so one must never be created here.
+target-version = "py39"  # runtime.txt pins python-3.9; formatted output stays 3.9-compatible.
+
+[format]
+# preserve keeps string delimiters exactly as authored. tests/test_heatmap.py
+# parses app.py source with single-quote-specific regexes (e.g. == '...'].copy(),
+# str.contains('...')), so normalizing to double quotes would break the suite even
+# though string VALUES are unchanged. Hebrew literals stay byte-exact either way.
+quote-style = "preserve"
