@@ -26,7 +26,15 @@ from dateutil import tz
 import numpy as np
 import gspread
 from gspread_dataframe import get_as_dataframe
-import os
+
+from config import (
+    REQUIRED_COLUMNS,
+    FIRST_REPORT_DATE,
+    SHEET_URL,
+    WORKSHEET_NAME,
+    get_google_credentials_json,
+    get_port,
+)
 
 app = Flask(__name__)
 CORS(app)
@@ -35,22 +43,6 @@ cache = Cache(app, config={'CACHE_TYPE': 'simple', 'CACHE_DEFAULT_TIMEOUT': 60})
 latest_odor_geojson: Optional[Dict[str, Any]] = None
 last_update_time: Optional[datetime] = None
 
-REQUIRED_COLUMNS = [
-    'תאריך שליחת הדיווח',
-    'שעת שליחת הדיווח',
-    'סוג דיווח',
-    'קואורדינטות',
-    'עוצמת הריח',
-    'צבע העשן',
-    'בדיקה',
-    'ספאם',
-    'אופי הריח',
-    'חומר נשרף משוער',
-    'תסמינים רפואיים'
-]
-FIRST_REPORT_DATE = datetime(2024, 4, 4, tzinfo=tz.gettz('Asia/Jerusalem'))
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1PMm_4Xkrv4Bmy7p9pI8Smnqzl12xgBVotYBEb2O45cg"
-WORKSHEET_NAME = 'Sheet1'
 
 class CustomJSONEncoder(json.JSONEncoder):
     """JSON encoder that serializes datetime, time, and timedelta values.
@@ -118,7 +110,7 @@ def get_google_credentials() -> service_account.Credentials:
     Raises:
         ValueError: If ``GOOGLE_CREDENTIALS`` is unset or empty.
     """
-    credentials_json = os.getenv('GOOGLE_CREDENTIALS')
+    credentials_json = get_google_credentials_json()
     if not credentials_json:
         raise ValueError("GOOGLE_CREDENTIALS environment variable not set")
     
@@ -687,5 +679,5 @@ def initialize_app() -> None:
 initialize_app()
 
 if __name__ == "__main__":
-    port = int(os.getenv('PORT', 8080))
+    port = get_port()
     app.run(host='0.0.0.0', port=port)
